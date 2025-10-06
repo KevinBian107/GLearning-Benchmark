@@ -1,0 +1,26 @@
+name: glearning_180a
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+
+  - pytorch=2.1.0
+  - numpy=1.24.3
+  - scipy=1.11.4
+  - pandas=2.1.4
+  
+  - matplotlib=3.8.2
+  - seaborn=0.13.0
+  - networkx=3.2.1
+  
+  - jupyterlab=4.0.9
+  - tqdm=4.66.1
+  - requests=2.31.0
+  
+  - pip=23.3.1
+  - pip:
+      - torch-geometric==2.4.0
+      - matplotlib-inline==0.1.6
+      - plotly==5.18.0
