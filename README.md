@@ -12,3 +12,4 @@ conda activate glearning_180a
 ## Notebooks
 
 - [IMBD & MUTAG GLearning Example](/simple_data.ipynb)
+- [Comparing GCN & GAT Example](/gcn_gat.ipynb)
