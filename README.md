@@ -1,5 +1,5 @@
 # DSC180-GLearning
-Practice Codebase for DSC180 Capstone Graph Learning & Graph Tokenization
+Practice Codebase for DSC180 Capstone Graph Learning & Graph Tokenization. The [documentation](/docs/) folder contains information about models we are training here.
 
 ## Environment
 Instantiate in the following:
@@ -41,12 +41,12 @@ bash task_generator.sh
 This should automatically setup the environment for the graph-token repository and generate the training graphs and tasks. Then we need to switch the path name and the `split` argument in the `sh` file to `test` to generate the test directory. Then run the following to train an simple transformer for this task:
 
 ```bash
-python train_tokenized_transformer.py \
+python train_gtt.py \
   --graph_token_root graph-token \
-  --task cycle_check \
+  --task connected_nodes \
   --algorithm er \
-  --run_name tt-1 \
-  --wandb_project graph-token-cyclecheck
+  --run_name gtt-connected-nodes \
+  --wandb_project graph-token
 ```
 
 ## Notebooks
