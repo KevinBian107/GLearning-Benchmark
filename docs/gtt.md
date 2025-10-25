@@ -22,6 +22,10 @@ The model’s objective is to predict whether the given tokenized graph encodes 
   - `yes` → graph contains at least one cycle  
   - `no`  → graph is acyclic
 
+The below is not implemented yet...
+
+---
+
 ### EdgeExistence:
 The model’s objective is to determine whether a given pair of nodes is directly connected by an edge.
 

@@ -43,9 +43,9 @@ This should automatically setup the environment for the graph-token repository a
 ```bash
 python train_gtt.py \
   --graph_token_root graph-token \
-  --task connected_nodes \
+  --task cycle_check \
   --algorithm er \
-  --run_name gtt-connected-nodes \
+  --run_name gtt-cycle-check \
   --wandb_project graph-token
 ```
 

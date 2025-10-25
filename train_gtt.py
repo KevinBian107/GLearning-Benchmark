@@ -108,8 +108,21 @@ def main(args):
     )
 
     train_ex = load_examples(train_glob)
-    val_ex   = load_examples(val_glob)
-    test_ex  = load_examples(test_glob)
+    val_ex = load_examples(val_glob)
+    test_ex = load_examples(test_glob)
+    
+    def show_sample(split_name, examples):
+        if not examples:
+            print(f"[{split_name}] no examples loaded")
+            return
+        ex = random.choice(examples)
+        toks = ex["text"].split()
+        print(f"[{split_name}] sample len={len(toks)}, label={ex.get('label','?')}")
+        print(" ".join(toks[:40]) + (" ..." if len(toks) > 40 else ""))
+
+    show_sample("train", train_ex)
+    show_sample("val", val_ex)
+    show_sample("test", test_ex)
 
     print(f"#train: {len(train_ex)} | #val: {len(val_ex)} | #test: {len(test_ex)}")
     if len(train_ex) == 0:
@@ -121,13 +134,13 @@ def main(args):
     pad_id = vocab["<pad>"]
 
     train_ds = TokenDataset(train_ex, vocab, args.max_len)
-    val_ds   = TokenDataset(val_ex,   vocab, args.max_len)
-    test_ds  = TokenDataset(test_ex,  vocab, args.max_len)
+    val_ds = TokenDataset(val_ex,   vocab, args.max_len)
+    test_ds = TokenDataset(test_ex,  vocab, args.max_len)
 
     coll = lambda b: collate(b, pad_id)
     train_dl = DataLoader(train_ds, batch_size=args.bs, shuffle=True,  num_workers=2, collate_fn=coll)
-    val_dl   = DataLoader(val_ds,   batch_size=args.bs, shuffle=False, num_workers=2, collate_fn=coll)
-    test_dl  = DataLoader(test_ds,  batch_size=args.bs, shuffle=False, num_workers=2, collate_fn=coll)
+    val_dl = DataLoader(val_ds,   batch_size=args.bs, shuffle=False, num_workers=2, collate_fn=coll)
+    test_dl = DataLoader(test_ds,  batch_size=args.bs, shuffle=False, num_workers=2, collate_fn=coll)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SimpleTransformer(
