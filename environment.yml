@@ -24,3 +24,4 @@ dependencies:
       - torch-geometric==2.4.0
       - matplotlib-inline==0.1.6
       - plotly==5.18.0
+      - wandb

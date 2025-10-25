@@ -1,3 +1,13 @@
+# logging and model
 data/
 out_graph/
 saved_models/
+wandb
+runs_*/
+
+# Repos
+GraphGPS/
+graph-token/
+
+# Envs
+graphenv/
