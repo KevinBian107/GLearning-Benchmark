@@ -4,6 +4,7 @@ out_graph/
 saved_models/
 wandb
 runs_*/
+__pycache__
 
 # Repos
 GraphGPS/
