@@ -76,4 +76,60 @@ conda clean --all
 > conda activate ~/private/DSC180-GLearning/conda_envs/graphgps
 > ```
 
-Then the rest will be just following the instructions like the one posted on the [GraphGPS repository](https://github.com/rampasek/GraphGPS).
+This repo's setup is outdated and we will get missing dependencies that we can get from here:
+
+```bash 
+python -m pip install --no-cache-dir \
+  torch-scatter torch-sparse torch-cluster torch-spline-conv \
+  -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+
+python -m pip install --no-cache-dir torch-geometric
+```
+
+Note that we will get an ABI mismatch: the CUDA extensions (torch_scatter, etc.) were built for a different PyTorch than the one actually in our environment. We will build everything again for a stable build.
+
+```bash
+# remove all torch / pyg pieces and purge pip cache
+python -m pip uninstall -y torch-geometric torch-sparse torch-scatter torch-cluster torch-spline-conv pyg-lib || true
+python -m pip uninstall -y torch torchvision torchaudio || true
+pip cache purge
+
+# install a stable GPU stack that PyG supports: Torch 2.4.0 + cu121
+python -m pip install --no-cache-dir \
+  torch==2.4.0+cu121 torchvision==0.19.0+cu121 torchaudio==2.4.0 \
+  --index-url https://download.pytorch.org/whl/cu121
+
+# install matching PyG CUDA extensions + libpyg for this torch build
+python -m pip install --no-cache-dir \
+  torch-scatter torch-sparse torch-cluster torch-spline-conv pyg-lib \
+  -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+
+# core PyG (pure python)
+python -m pip install --no-cache-dir torch-geometric
+
+# (GraphGym needs Lightning)
+python -m pip install --no-cache-dir pytorch-lightning
+
+# verify everything lines up
+python - <<'PY'
+import torch, torch_geometric
+from torch_sparse import SparseTensor
+print("torch:", torch.__version__, "cuda:", torch.version.cuda, "CUDA avail:", torch.cuda.is_available())
+print("pyg:", torch_geometric.__version__)
+print("SparseTensor OK:", isinstance(SparseTensor.eye(4), SparseTensor))
+PY
+```
+
+We should see something like this:
+
+```bash
+torch: 2.4.0+cu121 cuda: 12.1 CUDA avail: True
+pyg: 2.7.0
+SparseTensor OK: True
+```
+
+And then the following training that GraphGPS provided should work:
+
+```bash
+python main.py --cfg configs/GPS/zinc-GPS+RWSE.yaml wandb.use True
+```
