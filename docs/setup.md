@@ -19,7 +19,7 @@ conda activate glearning_180a
 To use the [graph-token](https://github.com/alip67/graph-token) code along with the vanilla transformer that we implemented, we will be using the same environment as mentioned above (`glearning_180a`). However, as the tokenization process enters the folder of graph-token, it will automatically create a small venv for doing some of the tokenization required process.
 
 ## Graph GPS
-[Graph GPS](https://github.com/rampasek/GraphGPS) requires a lot of dependencies, which may take up to 10GG without importing any data yet. This is why we need to work with GraphGPS conda environment not in the usual conda folder we put them. Instead of relying on the `/home` directory where quota is limited, we will be using the `/DSC180A_FA25_A00` directory where we ahve improved to 50GB of disk quota on DSMLP. Note that we can also use `/scratch` that has high quota, but this will be deleted everytime when we close the pod, so this is not ideal. Use the following command to se where the `/DSC180A_FA25_A00` directory is mounted on first:
+[Graph GPS](https://github.com/rampasek/GraphGPS) requires a lot of dependencies (and many of these dependencies are very old and outdated, making running GraphGPS very messy), which may take up to 10GB without importing any data yet. This is why we need to work with GraphGPS conda environment not in the usual conda folder we put them. Instead of relying on the `/home` directory where quota is limited, we will be using the `/DSC180A_FA25_A00` directory where we ahve improved to 50GB of disk quota on DSMLP. Note that we can also use `/scratch` that has high quota, but this will be deleted everytime when we close the pod, so this is not ideal. Use the following command to se where the `/DSC180A_FA25_A00` directory is mounted on first:
 
 ```bash
 mount | grep DS
@@ -128,8 +128,29 @@ pyg: 2.7.0
 SparseTensor OK: True
 ```
 
+In addition, the sklearn version of the GraphGPS repo is also very old, which we need to manually install:
+
+```bash
+# remove any pip/conda variants that could conflict
+python -m pip uninstall -y scikit-learn sklearn || true
+
+# install a known-good binary (matches NumPy/BLAS nicely)
+conda install -y -c conda-forge "scikit-learn==1.5.2"
+
+# verify we’re importing the right function (must show squared=...)
+python - <<'PY'
+import inspect, sklearn, sklearn.metrics as m
+print("sklearn:", sklearn.__version__, "from:", sklearn.__file__)
+print("sig    :", inspect.signature(m.mean_squared_error))
+PY
+```
+
 And then the following training that GraphGPS provided should work:
 
 ```bash
-python main.py --cfg configs/GPS/zinc-GPS+RWSE.yaml wandb.use True
+python main.py \
+  --cfg configs/GPS/zinc-GPS+RWSE.yaml \
+  wandb.use True \
+  wandb.entity kaiwenbian107 \
+  wandb.project GraphGPS
 ```
