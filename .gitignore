@@ -12,3 +12,7 @@ graph-token/
 
 # Envs
 graphenv/
+conda_envs/
+
+# claude
+.claude
