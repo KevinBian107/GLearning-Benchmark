@@ -10,13 +10,12 @@ The [documentation](/docs/) folder contains information about models we are trai
 
 | Aspect / Component | GraphGPS (`train_ggps.py`) | Tokenize + Vanilla Transformer (`train_gtt.py`) | MPNN (`train_mpnn.py`) |
 |------------------|---------------------------|-----------------------------------------------|-----------------------|
-| **Input** | Native graph structure (nodes, edges) | Tokenized sequence | Graph structure (nodes, edges) |
+| **Input** | Native graph | Tokenized sequence | Native graph |
 | **Architecture** | GNN + Transformer hybrid | Pure Transformer encoder | Message Passing Neural Network (e.g., GIN) |
 | **Inductive Bias** | Graph topology + global attention | Sequence order via positional encoding | Graph topology via message passing |
 | **Attention Scope** | Local (GNN) + Global (self-attn) | Global self-attention | Local (k-hop neighborhoods) |
 | **Pooling** | Graph pooling (mean/sum) | Sequence pooling (first token or mean) | Graph pooling (mean/sum) |
 | **Complexity** | O(E) + O(N²) | O(N²) | O(E) per layer |
-| **Best For** | Tasks needing both local structure + long-range context | Long sequences & pattern modeling | Local structural patterns |
 
 ### Configurations
 
@@ -49,10 +48,7 @@ bash task_generator.sh
 This should automatically setup the environment for the graph-token repository and generate the training graphs and tasks. Then we need to switch the path name and the `split` argument in the `sh` file to `test` to generate the test directory. Then run the following to train a simple transformer for this task:
 
 ```bash
-# Use default config (configs/gtt_graph_token.yaml)
 python train_gtt.py
-
-# Or specify a custom config file
 python train_gtt.py --config configs/gtt_graph_token.yaml
 ```
 
@@ -66,10 +62,7 @@ python train_gtt.py --config configs/gtt_graph_token.yaml
 Similarly, we can run a GPS model upon the native graph like the following:
 
 ```bash
-# Use default config (configs/gps_graph_token.yaml)
 python train_ggps.py
-
-# Or specify a custom config file
 python train_ggps.py --config configs/gps_graph_token.yaml
 ```
 
@@ -81,14 +74,12 @@ python train_ggps.py --config configs/gps_graph_token.yaml
 
 **Note**: GraphGPS uses a more complex config structure with sections like `gt` (graph transformer), `gnn`, and `optim`. See [docs/ggps.md](docs/ggps.md) for details on the architecture.
 
+
 ### Graph Native MPNN (Message Passing Neural Network)
 At last, using similar setup as GPS, we can perform MPNN upon the native graph as well:
 
 ```bash
-# Use default config (configs/mpnn_graph_token.yaml)
 python train_mpnn.py
-
-# Or specify a custom config file
 python train_mpnn.py --config configs/mpnn_graph_token.yaml
 ```
 
