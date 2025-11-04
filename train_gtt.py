@@ -1,4 +1,4 @@
-"""Train a mini-transformer upon the tokenized graph"""
+"""Train mini-transformer on tokenized graph"""
 
 import os, argparse, random
 import yaml

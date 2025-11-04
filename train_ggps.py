@@ -1,4 +1,4 @@
-"""Train GraphGPS on graph-token generated graphs"""
+"""Train GraphGPS on native graphs"""
 
 import os
 import argparse
@@ -83,9 +83,8 @@ def train_epoch(model, loader, optimizer, criterion, device):
         optimizer.zero_grad()
         out = model(batch)
 
-        # GraphGym models return (logits, predictions) tuple
-        # we want the logits for training
         if isinstance(out, tuple):
+            # GraphGym models return (predictions, label)
             pred, _ = out
         else:
             pred = out

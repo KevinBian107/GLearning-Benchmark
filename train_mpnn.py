@@ -1,4 +1,4 @@
-"""Train vanilla MPNN on native graph structures"""
+"""Train GIN-MPNN on native graph structures"""
 
 import os, argparse, random
 import yaml
@@ -15,12 +15,6 @@ from graph_token_dataset import GraphTokenDataset
 class MPNN(nn.Module):
     """
     Simple Message Passing Neural Network using GIN (Graph Isomorphism Network) layers.
-
-    Architecture:
-        1. Node encoder: Embed 1D constant features to hidden_dim
-        2. Message passing: L layers of GIN convolution
-        3. Graph pooling: Aggregate node embeddings to graph-level
-        4. Classifier: Linear layer for binary prediction
     """
     def __init__(
         self,
@@ -50,22 +44,22 @@ class MPNN(nn.Module):
             nn.BatchNorm1d(hidden_dim) for _ in range(num_layers)
         ])
 
-        # Classifier head for binary prediction (2 classes like GTT)
+        # classifier head for binary prediction (2 classes like GTT)
         self.classifier = nn.Linear(hidden_dim, 2)
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
 
-        # Encode node features
+        # encode node features
         x = self.node_encoder(x)
 
-        # Message passing layers
+        # message passing layers
         for conv, bn in zip(self.convs, self.batch_norms):
             x = conv(x, edge_index)
             x = bn(x)
             x = F.relu(x)
 
-        # Graph-level pooling
+        # graph-level pooling
         if self.pooling == 'mean':
             x = global_mean_pool(x, batch)
         elif self.pooling == 'add':
@@ -123,18 +117,15 @@ def load_config(config_path):
 
 
 def main(config):
-    # Extract config sections
     dataset_cfg = config['dataset']
     model_cfg = config['model']
     train_cfg = config['train']
     output_cfg = config['output']
     wandb_cfg = config['wandb']
 
-    # Set random seeds
     random.seed(train_cfg['seed'])
     torch.manual_seed(train_cfg['seed'])
 
-    # Load datasets
     train_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
@@ -163,12 +154,12 @@ def main(config):
     if len(test_dataset) == 0:
         print(f"[warn] No test files found. Test metrics will be trivial.")
 
-    # Show sample graph
+    # sample graph
     if len(train_dataset) > 0:
         sample = train_dataset[0]
         print(f"[train] sample: {sample.num_nodes} nodes, {sample.edge_index.size(1)} edges, label={sample.y.item()}")
 
-    # Create data loaders
+    # data loaders
     train_dl = DataLoader(train_dataset, batch_size=train_cfg['batch_size'], shuffle=True, num_workers=train_cfg['num_workers'])
     val_dl = DataLoader(val_dataset, batch_size=train_cfg['batch_size'], shuffle=False, num_workers=train_cfg['num_workers'])
     test_dl = DataLoader(test_dataset, batch_size=train_cfg['batch_size'], shuffle=False, num_workers=train_cfg['num_workers'])
