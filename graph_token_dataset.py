@@ -13,6 +13,7 @@ def parse_graph_from_text(text: str) -> Tuple[List[int], List[Tuple[int, int]]]:
 
     Args:
         text: Tokenized graph string like "<bos> 0 1 <e> 0 7 <e> 1 6 ... <n> 0 1 2 ..."
+              Format: edge pairs come BEFORE <e> marker: "src dst <e> src dst <e> ..."
 
     Returns:
         nodes: List of node IDs
@@ -22,15 +23,17 @@ def parse_graph_from_text(text: str) -> Tuple[List[int], List[Tuple[int, int]]]:
     edges = []
     nodes = []
 
-    # Parse edges: look for <e> followed by two integers
+    # Parse edges: look for pattern "src dst <e>"
+    # The two numbers come BEFORE <e>, not after!
     i = 0
     while i < len(tokens):
-        if tokens[i] == '<e>' and i + 2 < len(tokens):
+        # Check for pattern: number number <e>
+        if i + 2 < len(tokens) and tokens[i+2] == '<e>':
             try:
-                src = int(tokens[i + 1])
-                tgt = int(tokens[i + 2])
+                src = int(tokens[i])
+                tgt = int(tokens[i + 1])
                 edges.append((src, tgt))
-                i += 3
+                i += 3  # Skip to next edge
             except ValueError:
                 i += 1
         elif tokens[i] == '<n>' and i + 1 < len(tokens):
@@ -110,7 +113,8 @@ class GraphTokenDataset(InMemoryDataset):
     def raw_dir(self) -> str:
         """Directory containing raw JSON files."""
         if self.use_split_tasks_dirs:
-            if self.split == 'test':
+            if self.split in ['val', 'test']:
+                # Both val and test should use tasks_test directory
                 base = os.path.join(self._root, 'tasks_test', self.task, self.algorithm)
             else:
                 base = os.path.join(self._root, 'tasks_train', self.task, self.algorithm)
@@ -119,12 +123,13 @@ class GraphTokenDataset(InMemoryDataset):
 
         split_dir = os.path.join(base, self.split)
 
-        # Fallback: if val dir has no JSON files, use train instead
-        if self.split == 'val':
+        # For validation, look in test directory since val is stored there
+        if self.split == 'val' and self.use_split_tasks_dirs:
+            # Check if val exists in tasks_test, if not use test as val
             json_pattern = os.path.join(split_dir, '*.json')
             if len(glob(json_pattern)) == 0:
-                print(f"[warn] No validation files found, using train split for validation")
-                split_dir = os.path.join(base, 'train')
+                print(f"[warn] No validation directory found, using test split for validation")
+                split_dir = os.path.join(base, 'test')
 
         return split_dir
 

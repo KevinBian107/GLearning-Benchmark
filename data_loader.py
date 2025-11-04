@@ -163,7 +163,7 @@ def resolve_split_globs(root: str, task: str, algorithm: str, use_split_tasks_di
     train_base = os.path.join(root, "tasks_train", task, algorithm)
     test_base  = os.path.join(root, "tasks_test",  task, algorithm)
     train_glob_A = os.path.join(train_base, "train", "*.json")
-    val_glob_A   = os.path.join(train_base, "val",   "*.json")
+    val_glob_A   = os.path.join(test_base, "val",   "*.json")  # Val should be in tasks_test
     test_glob_A  = os.path.join(test_base,  "test",  "*.json")
     base_B = os.path.join(root, "tasks", task, algorithm)
     train_glob_B = os.path.join(base_B, "train", "*.json")
@@ -177,5 +177,6 @@ def resolve_split_globs(root: str, task: str, algorithm: str, use_split_tasks_di
     else:
         train_glob, val_glob, test_glob = train_glob_A, val_glob_A, test_glob_A
     if len(glob(val_glob)) == 0:
-        val_glob = train_glob
+        # If no val directory, use test directory for validation
+        val_glob = test_glob_A if use_split_tasks_dirs else test_glob_B
     return train_glob, val_glob, test_glob
