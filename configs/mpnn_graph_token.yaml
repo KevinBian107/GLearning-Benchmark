@@ -1,15 +1,15 @@
 dataset:
   graph_token_root: graph-token
-  task: cycle_check  # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
-  algorithm: er      # er, ba, sbm, ws, grid
+  task: cycle_check # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
+  algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
 
 model:
-  in_dim: 1          # Input feature dimension (constant features for synthetic graphs)
-  hidden_dim: 64     # Hidden dimension for GIN layers
-  num_layers: 3      # Number of message passing layers
-  dropout: 0.1       # Dropout rate
-  pooling: mean      # Graph pooling: mean, add, or max
+  in_dim: 1 # input feature dimension (constant features for synthetic graphs)
+  hidden_dim: 64 
+  num_layers: 4 
+  dropout: 0.1 
+  pooling: mean # mean, add, or max
 
 train:
   batch_size: 32
@@ -21,7 +21,7 @@ train:
 
 output:
   out_dir: runs_mpnn
-  run_name: mpnn-64x3-er
+  run_name: mpnn-cycle-check
 
 wandb:
   use: true

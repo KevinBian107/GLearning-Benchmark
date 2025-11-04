@@ -1,19 +1,19 @@
 dataset:
   graph_token_root: graph-token
   task: cycle_check  # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
-  algorithm: er      # er, ba, sbm, ws, grid
+  algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
-  max_len: 512       # Maximum sequence length
-  max_vocab: 60000   # Maximum vocabulary size
+  max_len: 512 # Maximum sequence length before truncated (cut graph)
+  max_vocab: 1000 # Maximum unique tokens include special/node_id/tasks
 
 model:
-  vocab_size: null   # Will be set automatically from training data
-  d_model: 256       # Model dimension
-  nhead: 8           # Number of attention heads
-  nlayers: 4         # Number of transformer layers
-  d_ff: 512          # Feed-forward dimension
-  dropout: 0.1       # Dropout rate
-  max_pos: 512       # Maximum positional encoding length (should match max_len)
+  vocab_size: null # set automatically from training data
+  d_model: 64  
+  nhead: 8 
+  nlayers: 4
+  d_ff: 214
+  dropout: 0.1
+  max_pos: 512 # maximum positional encoding length
 
 train:
   batch_size: 128

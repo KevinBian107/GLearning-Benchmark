@@ -1,7 +1,7 @@
 data:
   graph_token_root: graph-token
-  task: cycle_check  # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
-  algorithm: er      # er, ba, sbm, ws, grid
+  task: cycle_check # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
+  algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
 
 out_dir: runs_gps
@@ -14,7 +14,7 @@ wandb:
   use: true
   project: graph-token
 dataset:
-  format: custom  # Will be handled by our custom dataset
+  format: custom
   name: cycle_check
   task: graph
   task_type: classification
