@@ -392,7 +392,7 @@ if __name__ == '__main__':
     # Logging args
     parser.add_argument('--use_wandb', action='store_true', default=False,
                         help='Use Weights & Biases logging')
-    parser.add_argument('--wandb_project', type=str, default='graph-token-gps',
+    parser.add_argument('--wandb_project', type=str, default='graph-token',
                         help='W&B project name')
     parser.add_argument('--run_name', type=str, default='gps-cycle-check',
                         help='Run name for logging')

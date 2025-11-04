@@ -116,7 +116,17 @@ class GraphTokenDataset(InMemoryDataset):
                 base = os.path.join(self._root, 'tasks_train', self.task, self.algorithm)
         else:
             base = os.path.join(self._root, 'tasks', self.task, self.algorithm)
-        return os.path.join(base, self.split)
+
+        split_dir = os.path.join(base, self.split)
+
+        # Fallback: if val dir has no JSON files, use train instead
+        if self.split == 'val':
+            json_pattern = os.path.join(split_dir, '*.json')
+            if len(glob(json_pattern)) == 0:
+                print(f"[warn] No validation files found, using train split for validation")
+                split_dir = os.path.join(base, 'train')
+
+        return split_dir
 
     @property
     def processed_dir(self) -> str:

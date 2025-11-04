@@ -1,14 +1,14 @@
-# DSC180-Benchmarks
-Practice Codebase for DSC180 Capstone Graph Learning & Graph Tokenization. The [documentation](/docs/) folder contains information about models we are training here.
+# Graph Learning Benchmark
+This is a repository for benchmarking graph learning methods's performance across various different tasks (for HDSI 2026 DSC180 Capstone).
 
 ## Environment
 Refer to [this documentation](/docs/setup.md) for various different environmental setup.
 
 ## Running the Codebase
 
-Currently we supprt these two different methods for benchmarking performance:
+The [documentation](/docs/) folder contains information about models we are training here. Currently we supprt these two different methods for benchmarking performance:
 
-| Aspect | GraphGPS (`train_ggps.py`) | Vanilla Transformer (`train_gtt.py`) |
+| Aspect | GraphGPS (`train_ggps.py`) | Tokenize + Vanilla Transformer (`train_gtt.py`) |
 |--------|----------------------------|--------------------------------------|
 | **Input** | Native graph structure (nodes, edges) | Tokenized sequence |
 | **Architecture** | GNN + Transformer hybrid | Pure Transformer encoder |
@@ -33,12 +33,16 @@ This should automatically setup the environment for the graph-token repository a
 python train_gtt.py \
   --graph_token_root graph-token \
   --task cycle_check \
+  --epochs 100 \
   --algorithm er \
   --run_name gtt-cycle-check \
   --wandb_project graph-token
+  --out_dir runs_gtt
 ```
 
 ### Graph Native GPS
+Similarly, we can run a GPS model upon the native graph like the following
+
 ```bash
 python train_ggps.py \
   --graph_token_root graph-token \
@@ -50,11 +54,29 @@ python train_ggps.py \
   --lr 0.001 \
   --seed 0 \
   --use_wandb \
-  --wandb_project graph-token-gps \
-  --run_name gps-cycle-er-seed0 \
+  --wandb_project graph-token \
+  --run_name ggps-cycle-check \
   --out_dir runs_gps
 ```
 
-### Graph Basic Py-geometric
+### Graph Native Py-Geometric
+At last, using similar setup as GPS, we can perform MPNN upon the native graph as well:
+
+```bash
+python train_mpnn.py \
+    --graph_token_root graph-token \
+    --task cycle_check \
+    --algorithm er \
+    --hidden_dim 128 \
+    --num_layers 4 \
+    --bs 64 \
+    --lr 1e-3 \
+    --epochs 100 \
+    --run_name mpnn-cycle-check \
+    --out_dir runs_mpnn \
+    --wandb_project graph-token \
+```
+
+## Notebooks
 - [IMBD & MUTAG GLearning Example](notebooks/simple_data.ipynb)
 - [Comparing GCN & GAT Example](notebooks/gcn_gat.ipynb)
