@@ -15,34 +15,31 @@ from torch_geometric.graphgym.utils.device import auto_select_device
 from torch_geometric import seed_everything
 import wandb
 
-# Import GraphGPS modules
+# GraphGPS modules
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'GraphGPS'))
 import graphgps  # noqa, register custom modules
 from graphgps.optimizer.extra_optimizers import ExtendedSchedulerConfig
 from torch_geometric.graphgym.optim import create_optimizer, create_scheduler, OptimizerConfig
 
-# Import our custom dataset
+# graph-token dataset
 from graph_token_dataset import GraphTokenDataset
 
 
-def setup_cfg_from_args(args):
-    """Setup GraphGym config from command-line arguments."""
-    # Load base config
-    with open(args.config, 'r') as f:
-        config_dict = yaml.safe_load(f)
-
-    # Update config with command-line args
+def setup_cfg_from_config(config_dict):
+    """Setup GraphGym config from config dictionary."""
     set_cfg(cfg)
 
-    # Set dataset parameters
+    data_cfg = config_dict.get('data', {})
     cfg.dataset.format = 'custom'
-    cfg.dataset.name = args.task
+    cfg.dataset.name = data_cfg.get('task', 'cycle_check')
     cfg.dataset.task = 'graph'
     cfg.dataset.task_type = 'classification'
 
-    # Set model parameters from config file
+    # model parameters from config file
     for key, value in config_dict.items():
+        if key in ['data']:  # Skip our custom section
+            continue
         if key in cfg:
             if isinstance(value, dict):
                 for subkey, subvalue in value.items():
@@ -51,24 +48,14 @@ def setup_cfg_from_args(args):
             else:
                 setattr(cfg, key, value)
 
-    # Override with command-line args
-    cfg.seed = args.seed
-    cfg.wandb.use = args.use_wandb
-    cfg.wandb.project = args.wandb_project
-    cfg.optim.max_epoch = args.epochs
-    cfg.optim.base_lr = float(args.lr)
-    cfg.train.batch_size = args.batch_size
-    cfg.out_dir = args.out_dir
-    cfg.metric_best = 'accuracy'
-    cfg.metric_agg = 'argmax'
-
-    # Ensure optimizer params are floats (not strings)
-    cfg.optim.weight_decay = float(cfg.optim.weight_decay)
-    cfg.optim.base_lr = float(cfg.optim.base_lr)
+    # ensure optimizer params are floats (not strings)
+    if hasattr(cfg.optim, 'weight_decay'):
+        cfg.optim.weight_decay = float(cfg.optim.weight_decay)
+    if hasattr(cfg.optim, 'base_lr'):
+        cfg.optim.base_lr = float(cfg.optim.base_lr)
     if hasattr(cfg.optim, 'momentum'):
         cfg.optim.momentum = float(cfg.optim.momentum)
 
-    # Set device
     cfg.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     cfg.num_threads = 4
 
@@ -94,34 +81,30 @@ def train_epoch(model, loader, optimizer, criterion, device):
     for i, batch in enumerate(loader):
         batch = batch.to(device)
         optimizer.zero_grad()
-
-        # Forward pass
         out = model(batch)
 
         # GraphGym models return (logits, predictions) tuple
-        # We want the logits (first element) for training
+        # we want the logits for training
         if isinstance(out, tuple):
             pred, _ = out
         else:
             pred = out
 
-        # Get labels and convert to float for BCE loss
+        # labels and convert to float for BCE loss
         target = batch.y.squeeze(-1) if batch.y.dim() > 1 else batch.y
         target = target.float()
 
-        # Squeeze pred to match target shape
+        # squeeze pred to match target shape
         pred = pred.squeeze()
 
-        # Calculate loss (both pred and target should be (batch_size,))
+        # both pred and target should be (batch_size,)
         loss = criterion(pred, target)
 
-        # Backward pass
         loss.backward()
         if cfg.optim.clip_grad_norm:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
-        # Track metrics
         total_loss += loss.item() * batch.num_graphs
         total_acc += accuracy(pred, target) * batch.num_graphs
         num_graphs += batch.num_graphs
@@ -140,27 +123,19 @@ def eval_epoch(model, loader, criterion, device):
     for batch in loader:
         batch = batch.to(device)
 
-        # Forward pass
         out = model(batch)
 
-        # GraphGym models return (logits, predictions) tuple
-        # We want the logits (first element)
         if isinstance(out, tuple):
             pred, _ = out
         else:
             pred = out
 
-        # Get labels and convert to float for BCE loss
         target = batch.y.squeeze(-1) if batch.y.dim() > 1 else batch.y
         target = target.float()
 
-        # Squeeze pred to match target shape
         pred = pred.squeeze()
-
-        # Calculate loss (both pred and target should be (batch_size,))
         loss = criterion(pred, target)
 
-        # Track metrics
         total_loss += loss.item() * batch.num_graphs
         total_acc += accuracy(pred, target) * batch.num_graphs
         num_graphs += batch.num_graphs
@@ -168,35 +143,40 @@ def eval_epoch(model, loader, criterion, device):
     return total_loss / num_graphs, total_acc / num_graphs
 
 
-def main(args):
-    # Set random seeds
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    seed_everything(args.seed)
+def main(config_dict):
+    data_cfg = config_dict.get('data', {})
+    wandb_cfg = config_dict.get('wandb', {})
 
-    # Setup config
-    cfg_obj = setup_cfg_from_args(args)
+    seed = config_dict.get('seed', 0)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    seed_everything(seed)
+
+    cfg_obj = setup_cfg_from_config(config_dict)
     logging.basicConfig(level=logging.INFO)
 
-    # Load datasets
-    logging.info(f"Loading {args.task} dataset with algorithm {args.algorithm}")
+    task = data_cfg.get('task', 'cycle_check')
+    algorithm = data_cfg.get('algorithm', 'er')
+    graph_token_root = data_cfg.get('graph_token_root', 'graph-token')
+    use_split_tasks_dirs = data_cfg.get('use_split_tasks_dirs', True)
+
+    logging.info(f"Loading {task} dataset with algorithm {algorithm}")
 
     train_dataset = GraphTokenDataset(
-        root=args.graph_token_root,
-        task=args.task,
-        algorithm=args.algorithm,
+        root=graph_token_root,
+        task=task,
+        algorithm=algorithm,
         split='train',
-        use_split_tasks_dirs=True,
+        use_split_tasks_dirs=use_split_tasks_dirs,
     )
 
-    # Try to load validation set, fallback to using train if not available
     try:
         val_dataset = GraphTokenDataset(
-            root=args.graph_token_root,
-            task=args.task,
-            algorithm=args.algorithm,
+            root=graph_token_root,
+            task=task,
+            algorithm=algorithm,
             split='val',
-            use_split_tasks_dirs=True,
+            use_split_tasks_dirs=use_split_tasks_dirs,
         )
     except RuntimeError:
         logging.warning("No validation set found, using training set for validation")
@@ -204,11 +184,11 @@ def main(args):
 
     try:
         test_dataset = GraphTokenDataset(
-            root=args.graph_token_root,
-            task=args.task,
-            algorithm=args.algorithm,
+            root=graph_token_root,
+            task=task,
+            algorithm=algorithm,
             split='test',
-            use_split_tasks_dirs=True,
+            use_split_tasks_dirs=use_split_tasks_dirs,
         )
     except RuntimeError:
         logging.warning("No test set found")
@@ -217,40 +197,37 @@ def main(args):
     logging.info(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}" +
                  (f" | Test: {len(test_dataset)}" if test_dataset else ""))
 
-    # Show sample
     sample = train_dataset[0]
     logging.info(f"Sample graph: {sample.num_nodes} nodes, {sample.edge_index.size(1)} edges, label={sample.y.item()}")
 
-    # Create data loaders
+    batch_size = config_dict.get('train', {}).get('batch_size', 32)
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=2,
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=2,
     )
     if test_dataset:
         test_loader = DataLoader(
             test_dataset,
-            batch_size=args.batch_size,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=2,
         )
 
-    # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     auto_select_device()
 
-    # Get input/output dimensions from dataset
     dim_in = train_dataset[0].x.size(1) if train_dataset[0].x is not None else 1
-    dim_out = 1  # Binary classification with BCE loss (single sigmoid output)
+    dim_out = 1  # binary classification with BCE loss (single sigmoid output)
 
-    # Set dimensions in config (required for create_model)
     # create_model() reads from cfg.share.dim_in and cfg.share.dim_out
     cfg.share.dim_in = dim_in
     cfg.share.dim_out = dim_out
@@ -261,12 +238,10 @@ def main(args):
     # create_model() will read dim_in/dim_out from cfg.share
     model = create_model()
 
-    # Log model info
     logging.info(model)
     num_params = params_count(model)
     logging.info(f'Num parameters: {num_params}')
 
-    # Setup optimizer and scheduler
     optimizer = create_optimizer(
         model.parameters(),
         OptimizerConfig(
@@ -293,32 +268,32 @@ def main(args):
         )
     )
 
-    # Setup loss function
-    # Use BCE for binary classification with single sigmoid output
+    # BCE for binary classification with single sigmoid output
     criterion = nn.BCEWithLogitsLoss()
 
-    # Setup wandb
-    if args.use_wandb:
+    use_wandb = wandb_cfg.get('use', False)
+    wandb_project = wandb_cfg.get('project', 'graph-token')
+    run_name = config_dict.get('run_name', 'gps-cycle-check')
+
+    if use_wandb:
         wandb.init(
-            project=args.wandb_project,
-            name=args.run_name,
-            config=vars(args),
+            project=wandb_project,
+            name=run_name,
+            config=config_dict,
         )
         wandb.watch(model, log='all', log_freq=100)
 
-    # Training loop
-    os.makedirs(args.out_dir, exist_ok=True)
+    out_dir = config_dict.get('out_dir', 'runs_gps')
+    epochs = config_dict.get('optim', {}).get('max_epoch', 100)
+
+    os.makedirs(out_dir, exist_ok=True)
     best_val_acc = 0.0
     best_state = None
 
-    for epoch in range(1, args.epochs + 1):
-        # Train
+    for epoch in range(1, epochs + 1):
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion, device)
-
-        # Validate
         val_loss, val_acc = eval_epoch(model, val_loader, criterion, device)
 
-        # Log
         log_dict = {
             'epoch': epoch,
             'train/loss': train_loss,
@@ -328,7 +303,7 @@ def main(args):
             'lr': optimizer.param_groups[0]['lr'],
         }
 
-        if args.use_wandb:
+        if use_wandb:
             wandb.log(log_dict)
 
         logging.info(
@@ -337,67 +312,40 @@ def main(args):
             f"Val: {val_loss:.4f}/{val_acc:.4f}"
         )
 
-        # Save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
             torch.save(
                 {'state_dict': best_state, 'epoch': epoch, 'val_acc': val_acc},
-                os.path.join(args.out_dir, f'best_{args.run_name}.pt'),
+                os.path.join(out_dir, f'best_{run_name}.pt'),
             )
 
-        # Step scheduler
         scheduler.step()
 
-    # Test on best model
+    # test on best model
     if test_dataset and best_state:
         model.load_state_dict(best_state)
         test_loss, test_acc = eval_epoch(model, test_loader, criterion, device)
         logging.info(f"Test: {test_loss:.4f}/{test_acc:.4f}")
 
-        if args.use_wandb:
+        if use_wandb:
             wandb.log({'test/loss': test_loss, 'test/acc': test_acc})
 
-    if args.use_wandb:
+    if use_wandb:
         wandb.finish()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train GraphGPS on graph-token tasks')
-
-    # Dataset args
-    parser.add_argument('--graph_token_root', type=str, default='graph-token',
-                        help='Path to graph-token repository')
-    parser.add_argument('--task', type=str, default='cycle_check',
-                        choices=['cycle_check', 'edge_existence', 'node_degree',
-                                'node_count', 'edge_count', 'connected_nodes'],
-                        help='Task name')
-    parser.add_argument('--algorithm', type=str, default='er',
-                        help='Graph generation algorithm (er, ba, sbm, etc.)')
-
-    # Model args
     parser.add_argument('--config', type=str, default='configs/gps_graph_token.yaml',
-                        help='Path to config file')
-
-    # Training args
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='Number of epochs')
-    parser.add_argument('--batch_size', type=int, default=32,
-                        help='Batch size')
-    parser.add_argument('--lr', type=float, default=1e-3,
-                        help='Learning rate')
-    parser.add_argument('--seed', type=int, default=0,
-                        help='Random seed')
-
-    # Logging args
-    parser.add_argument('--use_wandb', action='store_true', default=False,
-                        help='Use Weights & Biases logging')
-    parser.add_argument('--wandb_project', type=str, default='graph-token',
-                        help='W&B project name')
-    parser.add_argument('--run_name', type=str, default='gps-cycle-check',
-                        help='Run name for logging')
-    parser.add_argument('--out_dir', type=str, default='runs_gps',
-                        help='Output directory for checkpoints')
-
+                        help='Path to YAML config file')
     args = parser.parse_args()
-    main(args)
+
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+
+    print(f"Loaded config from: {args.config}")
+    data_cfg = config.get('data', {})
+    print(f"Task: {data_cfg.get('task', 'cycle_check')} | Algorithm: {data_cfg.get('algorithm', 'er')}")
+
+    main(config)

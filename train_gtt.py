@@ -1,6 +1,7 @@
 """Train a mini-transformer upon the tokenized graph"""
 
 import os, argparse, random
+import yaml
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -95,16 +96,30 @@ def eval_epoch(model, dl, crit, device):
         n += bs
     return total_loss / max(1, n), total_acc / max(1, n)
 
-def main(args):
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
+def load_config(config_path):
+    """Load configuration from YAML file."""
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
+
+def main(config):
+    # Extract config sections
+    dataset_cfg = config['dataset']
+    model_cfg = config['model']
+    train_cfg = config['train']
+    output_cfg = config['output']
+    wandb_cfg = config['wandb']
+
+    # Set random seeds
+    random.seed(train_cfg['seed'])
+    torch.manual_seed(train_cfg['seed'])
 
     # Resolve dataset globs (supports tasks/ or tasks_{train,test}/)
     train_glob, val_glob, test_glob = resolve_split_globs(
-        root=args.graph_token_root,
-        task=args.task,
-        algorithm=args.algorithm,
-        use_split_tasks_dirs=True,
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithm=dataset_cfg['algorithm'],
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
     )
 
     train_ex = load_examples(train_glob)
@@ -130,84 +145,79 @@ def main(args):
     if len(test_ex) == 0:
         print(f"[warn] No test files at {test_glob}. Test metrics will be trivial.")
 
-    vocab, _ = build_vocab_from_texts([e["text"] for e in train_ex], max_tokens=args.max_vocab)
+    vocab, _ = build_vocab_from_texts([e["text"] for e in train_ex], max_tokens=dataset_cfg['max_vocab'])
     pad_id = vocab["<pad>"]
 
-    train_ds = TokenDataset(train_ex, vocab, args.max_len)
-    val_ds = TokenDataset(val_ex,   vocab, args.max_len)
-    test_ds = TokenDataset(test_ex,  vocab, args.max_len)
+    train_ds = TokenDataset(train_ex, vocab, dataset_cfg['max_len'])
+    val_ds = TokenDataset(val_ex,   vocab, dataset_cfg['max_len'])
+    test_ds = TokenDataset(test_ex,  vocab, dataset_cfg['max_len'])
 
     coll = lambda b: collate(b, pad_id)
-    train_dl = DataLoader(train_ds, batch_size=args.bs, shuffle=True,  num_workers=2, collate_fn=coll)
-    val_dl = DataLoader(val_ds,   batch_size=args.bs, shuffle=False, num_workers=2, collate_fn=coll)
-    test_dl = DataLoader(test_ds,  batch_size=args.bs, shuffle=False, num_workers=2, collate_fn=coll)
+    train_dl = DataLoader(train_ds, batch_size=train_cfg['batch_size'], shuffle=True,  num_workers=train_cfg['num_workers'], collate_fn=coll)
+    val_dl = DataLoader(val_ds,   batch_size=train_cfg['batch_size'], shuffle=False, num_workers=train_cfg['num_workers'], collate_fn=coll)
+    test_dl = DataLoader(test_ds,  batch_size=train_cfg['batch_size'], shuffle=False, num_workers=train_cfg['num_workers'], collate_fn=coll)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SimpleTransformer(
         vocab_size=len(vocab),
-        d_model=args.d_model,
-        nhead=args.nhead,
-        nlayers=args.nlayers,
-        d_ff=args.d_ff,
-        p_drop=args.drop,
-        max_pos=args.max_len,
+        d_model=model_cfg['d_model'],
+        nhead=model_cfg['nhead'],
+        nlayers=model_cfg['nlayers'],
+        d_ff=model_cfg['d_ff'],
+        p_drop=model_cfg['dropout'],
+        max_pos=model_cfg['max_pos'],
     ).to(device)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'], weight_decay=train_cfg['weight_decay'])
     crit = nn.CrossEntropyLoss()
 
-    wandb.init(project=args.wandb_project, name=args.run_name, config=vars(args))
-    wandb.watch(model, log="all", log_freq=100)
+    if wandb_cfg['use']:
+        wandb.init(project=wandb_cfg['project'], name=output_cfg['run_name'], config=config)
+        wandb.watch(model, log="all", log_freq=100)
 
-    os.makedirs(args.out_dir, exist_ok=True)
+    os.makedirs(output_cfg['out_dir'], exist_ok=True)
     best_val, best_state = -1.0, None
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(1, train_cfg['epochs'] + 1):
         tr_loss, tr_acc = train_one_epoch(model, train_dl, opt, crit, device)
         va_loss, va_acc = eval_epoch(model, val_dl,   crit, device)
-        wandb.log({
+
+        log_dict = {
             "epoch": epoch,
             "train/loss": tr_loss, "train/acc": tr_acc,
             "val/loss": va_loss,   "val/acc": va_acc,
             "lr": opt.param_groups[0]["lr"],
-        })
+        }
+        if wandb_cfg['use']:
+            wandb.log(log_dict)
+
         print(f"epoch {epoch:03d} | train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f}")
 
         if va_acc > best_val:
             best_val = va_acc
             best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
             torch.save(
-                {"state_dict": best_state, "vocab": vocab},
-                os.path.join(args.out_dir, f"best_{args.run_name}.pt"),
+                {"state_dict": best_state, "vocab": vocab, "config": config},
+                os.path.join(output_cfg['out_dir'], f"best_{output_cfg['run_name']}.pt"),
             )
 
     if best_state:
         model.load_state_dict(best_state)
     te_loss, te_acc = eval_epoch(model.to(device), test_dl, crit, device)
     print(f"TEST loss/acc: {te_loss:.4f}/{te_acc:.4f}")
-    wandb.log({"test/loss": te_loss, "test/acc": te_acc})
-    wandb.finish()
+
+    if wandb_cfg['use']:
+        wandb.log({"test/loss": te_loss, "test/acc": te_acc})
+        wandb.finish()
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--graph_token_root", type=str, default="graph-token", help="path to the graph-token repo")
-    ap.add_argument("--task", type=str, default="cycle_check",
-                    choices=["cycle_check","edge_existence","node_degree","node_count","edge_count","connected_nodes"])
-    ap.add_argument("--algorithm", type=str, default="er", help="er/ba/sbm/… per the repo")
-    ap.add_argument("--max_len", type=int, default=512)
-    ap.add_argument("--max_vocab", type=int, default=60000)
-    ap.add_argument("--bs", type=int, default=128)
-    ap.add_argument("--epochs", type=int, default=100)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--weight_decay", type=float, default=1e-4)
-    ap.add_argument("--d_model", type=int, default=256)
-    ap.add_argument("--nhead", type=int, default=8)
-    ap.add_argument("--nlayers", type=int, default=4)
-    ap.add_argument("--d_ff", type=int, default=512)
-    ap.add_argument("--drop", type=float, default=0.1)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out_dir", type=str, default="runs_gtt")
-    ap.add_argument("--wandb_project", type=str, default="graph-token")
-    ap.add_argument("--run_name", type=str, default="gtt-cycle-check")
+    ap = argparse.ArgumentParser(description="Train Graph Tokenization + Transformer on graph-token tasks")
+    ap.add_argument("--config", type=str, default="configs/gtt_graph_token.yaml",
+                    help="Path to YAML config file")
     args = ap.parse_args()
-    main(args)
+
+    config = load_config(args.config)
+    print(f"Loaded config from: {args.config}")
+    print(f"Task: {config['dataset']['task']} | Algorithm: {config['dataset']['algorithm']}")
+
+    main(config)

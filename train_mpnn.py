@@ -1,6 +1,7 @@
 """Train vanilla MPNN on native graph structures"""
 
 import os, argparse, random
+import yaml
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -114,31 +115,46 @@ def eval_epoch(model, dl, crit, device):
     return total_loss / max(1, n), total_acc / max(1, n)
 
 
-def main(args):
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
+def load_config(config_path):
+    """Load configuration from YAML file."""
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
+
+
+def main(config):
+    # Extract config sections
+    dataset_cfg = config['dataset']
+    model_cfg = config['model']
+    train_cfg = config['train']
+    output_cfg = config['output']
+    wandb_cfg = config['wandb']
+
+    # Set random seeds
+    random.seed(train_cfg['seed'])
+    torch.manual_seed(train_cfg['seed'])
 
     # Load datasets
     train_dataset = GraphTokenDataset(
-        root=args.graph_token_root,
-        task=args.task,
-        algorithm=args.algorithm,
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithm=dataset_cfg['algorithm'],
         split='train',
-        use_split_tasks_dirs=True,
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
     )
     val_dataset = GraphTokenDataset(
-        root=args.graph_token_root,
-        task=args.task,
-        algorithm=args.algorithm,
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithm=dataset_cfg['algorithm'],
         split='val',
-        use_split_tasks_dirs=True,
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
     )
     test_dataset = GraphTokenDataset(
-        root=args.graph_token_root,
-        task=args.task,
-        algorithm=args.algorithm,
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithm=dataset_cfg['algorithm'],
         split='test',
-        use_split_tasks_dirs=True,
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
     )
 
     print(f"#train: {len(train_dataset)} | #val: {len(val_dataset)} | #test: {len(test_dataset)}")
@@ -153,72 +169,71 @@ def main(args):
         print(f"[train] sample: {sample.num_nodes} nodes, {sample.edge_index.size(1)} edges, label={sample.y.item()}")
 
     # Create data loaders
-    train_dl = DataLoader(train_dataset, batch_size=args.bs, shuffle=True, num_workers=2)
-    val_dl = DataLoader(val_dataset, batch_size=args.bs, shuffle=False, num_workers=2)
-    test_dl = DataLoader(test_dataset, batch_size=args.bs, shuffle=False, num_workers=2)
+    train_dl = DataLoader(train_dataset, batch_size=train_cfg['batch_size'], shuffle=True, num_workers=train_cfg['num_workers'])
+    val_dl = DataLoader(val_dataset, batch_size=train_cfg['batch_size'], shuffle=False, num_workers=train_cfg['num_workers'])
+    test_dl = DataLoader(test_dataset, batch_size=train_cfg['batch_size'], shuffle=False, num_workers=train_cfg['num_workers'])
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MPNN(
-        in_dim=1,
-        hidden_dim=args.hidden_dim,
-        num_layers=args.num_layers,
-        dropout=args.drop,
-        pooling=args.pooling,
+        in_dim=model_cfg['in_dim'],
+        hidden_dim=model_cfg['hidden_dim'],
+        num_layers=model_cfg['num_layers'],
+        dropout=model_cfg['dropout'],
+        pooling=model_cfg['pooling'],
     ).to(device)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'], weight_decay=train_cfg['weight_decay'])
     crit = nn.CrossEntropyLoss()
 
-    wandb.init(project=args.wandb_project, name=args.run_name, config=vars(args))
-    wandb.watch(model, log="all", log_freq=100)
+    # Initialize W&B if enabled
+    if wandb_cfg['use']:
+        wandb.init(project=wandb_cfg['project'], name=output_cfg['run_name'], config=config)
+        wandb.watch(model, log="all", log_freq=100)
 
-    os.makedirs(args.out_dir, exist_ok=True)
+    os.makedirs(output_cfg['out_dir'], exist_ok=True)
     best_val, best_state = -1.0, None
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(1, train_cfg['epochs'] + 1):
         tr_loss, tr_acc = train_one_epoch(model, train_dl, opt, crit, device)
         va_loss, va_acc = eval_epoch(model, val_dl, crit, device)
-        wandb.log({
+
+        log_dict = {
             "epoch": epoch,
             "train/loss": tr_loss, "train/acc": tr_acc,
             "val/loss": va_loss, "val/acc": va_acc,
             "lr": opt.param_groups[0]["lr"],
-        })
+        }
+        if wandb_cfg['use']:
+            wandb.log(log_dict)
+
         print(f"epoch {epoch:03d} | train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f}")
 
         if va_acc > best_val:
             best_val = va_acc
             best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
             torch.save(
-                {"state_dict": best_state, "config": vars(args)},
-                os.path.join(args.out_dir, f"best_{args.run_name}.pt"),
+                {"state_dict": best_state, "config": config},
+                os.path.join(output_cfg['out_dir'], f"best_{output_cfg['run_name']}.pt"),
             )
 
     if best_state:
         model.load_state_dict(best_state)
     te_loss, te_acc = eval_epoch(model.to(device), test_dl, crit, device)
     print(f"TEST loss/acc: {te_loss:.4f}/{te_acc:.4f}")
-    wandb.log({"test/loss": te_loss, "test/acc": te_acc})
-    wandb.finish()
+
+    if wandb_cfg['use']:
+        wandb.log({"test/loss": te_loss, "test/acc": te_acc})
+        wandb.finish()
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--graph_token_root", type=str, default="graph-token", help="path to the graph-token repo")
-    ap.add_argument("--task", type=str, default="cycle_check",
-                    choices=["cycle_check","edge_existence","node_degree","node_count","edge_count","connected_nodes"])
-    ap.add_argument("--algorithm", type=str, default="er", help="er/ba/sbm/… per the repo")
-    ap.add_argument("--bs", type=int, default=32)
-    ap.add_argument("--epochs", type=int, default=100)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--weight_decay", type=float, default=1e-5)
-    ap.add_argument("--hidden_dim", type=int, default=64)
-    ap.add_argument("--num_layers", type=int, default=3)
-    ap.add_argument("--drop", type=float, default=0.1)
-    ap.add_argument("--pooling", type=str, default="mean", choices=["mean","add","max"])
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out_dir", type=str, default="runs_mpnn")
-    ap.add_argument("--wandb_project", type=str, default="graph-token")
-    ap.add_argument("--run_name", type=str, default="mpnn-64x3-er")
+    ap = argparse.ArgumentParser(description="Train MPNN on graph-token tasks")
+    ap.add_argument("--config", type=str, default="configs/mpnn_graph_token.yaml",
+                    help="Path to YAML config file")
     args = ap.parse_args()
-    main(args)
+
+    config = load_config(args.config)
+    print(f"Loaded config from: {args.config}")
+    print(f"Task: {config['dataset']['task']} | Algorithm: {config['dataset']['algorithm']}")
+
+    main(config)
