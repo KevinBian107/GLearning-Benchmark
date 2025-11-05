@@ -9,6 +9,7 @@ run_name: gps-cycle-check
 seed: 0
 metric_best: accuracy
 metric_agg: argmax
+accelerator: cuda
 
 wandb:
   use: true

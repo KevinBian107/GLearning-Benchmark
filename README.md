@@ -99,4 +99,5 @@ python train_mpnn.py --config configs/mpnn_graph_token.yaml
 
 ## Acknowledgements
 - Official [graph-token repository](https://github.com/alip67/graph-token)
+- Official [Autograph repository](https://github.com/BorgwardtLab/AutoGraph)
 - Official [GraphGPS repositroy](https://github.com/rampasek/GraphGPS)

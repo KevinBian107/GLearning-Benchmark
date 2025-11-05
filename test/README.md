@@ -160,3 +160,37 @@ Testing untrained MPNN model (random weights)...
 ```
 
 ---
+
+### 3. `check_input.py` - Input Format & Prediction Type Checker
+
+**Purpose**: Analyze input formats and identify prediction types for all tasks.
+
+**What it checks:**
+- ✓ Tokenized sequence format (for GTT/Transformer)
+- ✓ Native graph format (for MPNN/GPS)
+- ✓ Prediction types (binary, regression, etc.)
+- ✓ Label distributions and dataset statistics
+
+**Usage:**
+```bash
+# Check all available tasks
+python test/check_input.py
+```
+
+**Key Findings:**
+
+| Task | Prediction Type | Label Format |
+|------|----------------|--------------|
+| cycle_check | Binary Classification | `yes`/`no` → 1/0 |
+| edge_existence | Binary Classification | `yes`/`no` → 1/0 |
+| node_degree | Regression | `d3` → 3 (needs parser) |
+| node_count | Regression | `n8` → 8 (needs parser) |
+| edge_count | Regression | `m42` → 42 (needs parser) |
+| connected_nodes | Set Prediction | `{ 2 3 4 }` (needs parser) |
+
+**Model Configuration:**
+- **Binary:** Output dim=2, CrossEntropyLoss
+- **Regression:** Output dim=1, MSELoss
+- **Set:** Output dim=num_nodes, BCEWithLogitsLoss
+
+---
