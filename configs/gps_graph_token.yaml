@@ -1,11 +1,12 @@
 data:
   graph_token_root: graph-token
-  task: cycle_check # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
+  task: shortest_path # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
+  data_fraction: 0.2 # fraction of data to use (0.0-1.0), same for train/val/test
 
 out_dir: runs_gps
-run_name: gps-cycle-check
+run_name: gps-shortest-path
 seed: 0
 metric_best: accuracy
 metric_agg: argmax
@@ -16,7 +17,7 @@ wandb:
   project: graph-token
 dataset:
   format: custom
-  name: cycle_check
+  name: shortest_path
   task: graph
   task_type: classification
   transductive: False
@@ -32,7 +33,7 @@ train:
   ckpt_period: 100
 model:
   type: GPSModel
-  loss_fun: cross_entropy
+  loss_fun: cross_entropy  # CrossEntropyLoss for multi-class
   edge_decoding: dot
   graph_pooling: mean
 gt:

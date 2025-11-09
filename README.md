@@ -59,7 +59,7 @@ This method uses AutoGraph's trail-based tokenization (SENT algorithm) to conver
 
 ```bash
 conda activate autograph
-python train.py --model abtt
+python train.py --model agtt
 ```
 
 **Note**: AGTT uses the same transformer architecture as IBTT but with different tokenization. It loads native graphs (like MPNN/GraphGPS) and applies AutoGraph's trail-based tokenization instead of index-based tokenization. This enables comparing **tokenization strategies** while keeping the model architecture constant.

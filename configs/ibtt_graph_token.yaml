@@ -1,19 +1,21 @@
 dataset:
   graph_token_root: graph-token
-  task: cycle_check  # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
+  task: shortest_path  # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
+  data_fraction: 0.2 # fraction of data to use (0.0-1.0), same for train/val/test
   max_len: 512 # maximum sequence length before truncated (cut graph)
   max_vocab: 1000 # maximum unique tokens include special/node_id/tasks
 
 model:
   vocab_size: null # set automatically from training data
-  d_model: 64  
-  nhead: 8 
+  d_model: 64
+  nhead: 8
   nlayers: 4
   d_ff: 214
   dropout: 0.1
   max_pos: 512 # maximum positional encoding length
+  num_classes: 7 # 7 for shortest_path (len1-len7), 2 for cycle_check
 
 train:
   batch_size: 128
@@ -25,7 +27,7 @@ train:
 
 output:
   out_dir: runs_ibtt
-  run_name: ibtt-cycle-check
+  run_name: ibtt-shortest-path
 
 wandb:
   use: true

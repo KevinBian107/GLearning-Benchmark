@@ -19,7 +19,7 @@ conda activate glearning_180a
 ```
 
 ## Index-Tokenized Transformer
-To use the [graph-token](https://github.com/alip67/graph-token) code along with the vanilla transformer that we implemented, we will be using the same environment as mentioned above (`glearning_180a`). However, as the tokenization process enters the folder of graph-token, it will automatically create a small venv for doing some of the tokenization required process.
+To use the [graph-token](https://github.com/alip67/graph-token) code along with the vanilla transformer that we implemented, we will be using the same environment as mentioned above (`glearning_180a`). However, as the tokenization process enters the folder of graph-token, it will automatically create a small virtual environment called `graphenv` for doing some of the tokenization required process.
 
 ## Autograph-Tokenized + Transformer
 To use [AutoGraph](https://github.com/BorgwardtLab/AutoGraph) code along with the vanilla transformer that we implemented, we will be using the environment that they specify on their repository. This should run without an issue on DSMLP and we copied over for conviniency:

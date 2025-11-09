@@ -32,6 +32,7 @@ class SimpleTransformer(nn.Module):
         d_ff: int = 512,
         p_drop: float = 0.1,
         max_pos: int = 4096,
+        num_classes: int = 2,
     ):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, d_model)
@@ -45,7 +46,7 @@ class SimpleTransformer(nn.Module):
         )
         self.enc = nn.TransformerEncoder(enc_layer, num_layers=nlayers)
         self.norm = nn.LayerNorm(d_model)
-        self.cls = nn.Linear(d_model, 2)  # Binary classification
+        self.cls = nn.Linear(d_model, num_classes)
 
         nn.init.trunc_normal_(self.embed.weight, std=0.02)
         nn.init.trunc_normal_(self.pos.weight, std=0.02)
@@ -170,12 +171,17 @@ def main(config):
 
     # load PyG datasets (graph-native format)
     print("Loading graph-native datasets...")
+    data_fraction = dataset_cfg.get('data_fraction', 1.0)
+    seed = train_cfg['seed']
+
     train_pyg = GraphTokenDatasetForAutoGraph(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
         algorithm=dataset_cfg['algorithm'],
         split='train',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
 
     val_pyg = GraphTokenDatasetForAutoGraph(
@@ -184,6 +190,8 @@ def main(config):
         algorithm=dataset_cfg['algorithm'],
         split='val',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
 
     test_pyg = GraphTokenDatasetForAutoGraph(
@@ -192,6 +200,8 @@ def main(config):
         algorithm=dataset_cfg['algorithm'],
         split='test',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
 
     print(f"#train: {len(train_pyg)} | #val: {len(val_pyg)} | #test: {len(test_pyg)}")
@@ -239,6 +249,12 @@ def main(config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    # Determine number of classes based on task
+    if dataset_cfg['task'] == 'shortest_path':
+        num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
+    else:  # cycle_check or other binary tasks
+        num_classes = model_cfg.get('num_classes', 2)
+
     model = SimpleTransformer(
         vocab_size=vocab_size,
         d_model=model_cfg['d_model'],
@@ -247,6 +263,7 @@ def main(config):
         d_ff=model_cfg['d_ff'],
         p_drop=model_cfg['dropout'],
         max_pos=model_cfg['max_pos'],
+        num_classes=num_classes,
     ).to(device)
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")

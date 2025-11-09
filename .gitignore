@@ -7,17 +7,21 @@ runs_*/
 __pycache__
 
 # Processed datasets
-graph-token/processed/
 *.pt
 
 # Repos
 GraphGPS/
-graph-token/
 AutoGraph/
+graph-token/
 
-# Envs
-graphenv/
-conda_envs/
+# graph-token
+# graph-token/graphenv/
+# graph-token/processed/
+# graph-token/__pycache__
+# graph-token/graphs_test/
+# graph-token/graphs_train/
+# graph-token/tasks_test/
+# graph-token/tasks_train/
 
 # claude
 .claude

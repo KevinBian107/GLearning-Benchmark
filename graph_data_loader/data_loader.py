@@ -16,43 +16,129 @@ def parse_yes_no_from_text(text: str) -> Optional[int]:
         if t == "no": return 0
     return None
 
-def _extract_text_and_label(rec: Any) -> Tuple[Optional[str], Optional[int]]:
+def parse_distance_label_from_text(text: str) -> Optional[int]:
+    """Parse distance label from text like '<p> len3' -> 2 (0-indexed)
+
+    Returns:
+        Distance as 0-indexed class (len1->0, len2->1, ..., len7->6),
+        or None if unreachable (INF) or parsing fails
+    """
+    tokens = text.split()
+    for i, tok in enumerate(tokens):
+        if tok == '<p>' and i + 1 < len(tokens):
+            label_tok = tokens[i + 1].upper()  # Handle case-insensitive
+            if label_tok in ('INF', 'INFINITY', '<EOS>'):
+                # Unreachable - skip these samples for now
+                return None
+            if label_tok.startswith('LEN'):
+                try:
+                    distance = int(label_tok[3:])  # 'len3' -> 3
+                    # Convert to 0-indexed for PyTorch (len1->0, len2->1, ..., len7->6)
+                    return distance - 1
+                except ValueError:
+                    pass
+    return None
+
+def parse_query_nodes_from_text(text: str) -> Optional[Tuple[int, int]]:
+    """Parse query nodes from text like '<q> shortest_distance 0 1' -> (0, 1)"""
+    tokens = text.split()
+    for i, tok in enumerate(tokens):
+        if tok == '<q>' and i + 3 < len(tokens):
+            # Expect format: <q> shortest_distance u v
+            if tokens[i + 1] == 'shortest_distance':
+                try:
+                    u = int(tokens[i + 2])
+                    v = int(tokens[i + 3])
+                    return (u, v)
+                except ValueError:
+                    pass
+    return None
+
+def _extract_text_and_label(rec: Any, task: str = 'cycle_check') -> Tuple[Optional[str], Optional[int], Optional[Tuple[int, int]]]:
+    """Extract text, label, and query nodes (for shortest_path) from a record.
+
+    Returns:
+        (text, label, query_nodes) where query_nodes is None for cycle_check
+    """
+    query_nodes = None
+
     if isinstance(rec, str):
         t = rec.strip()
-        return t, parse_yes_no_from_text(t)
+        if task == 'shortest_path':
+            lab = parse_distance_label_from_text(t)
+            query_nodes = parse_query_nodes_from_text(t)
+        else:
+            lab = parse_yes_no_from_text(t)
+        return t, lab, query_nodes
+
     if isinstance(rec, dict):
         text = rec.get("text") or rec.get("sequence")
         if text is None and "tokens" in rec and isinstance(rec["tokens"], (list, tuple)):
             text = " ".join(map(str, rec["tokens"]))
         lab = rec.get("label")
-        if isinstance(lab, str):
-            lab_l = lab.lower().strip()
-            if lab_l in ("yes","true","connected","reachable"): lab = 1
-            elif lab_l in ("no","false","disconnected","unreachable"): lab = 0
-            else: lab = None
-        elif isinstance(lab, (int, bool)):
-            lab = int(bool(lab))
-        if isinstance(text, str) and lab is None:
-            lab = parse_yes_no_from_text(text)
-        return (text.strip() if isinstance(text, str) else None), lab
+
+        # Parse label based on task
+        if task == 'shortest_path':
+            if isinstance(lab, int):
+                pass  # Already an int distance
+            elif isinstance(text, str):
+                lab = parse_distance_label_from_text(text)
+                query_nodes = parse_query_nodes_from_text(text)
+        else:  # cycle_check or similar binary tasks
+            if isinstance(lab, str):
+                lab_l = lab.lower().strip()
+                if lab_l in ("yes","true","connected","reachable"): lab = 1
+                elif lab_l in ("no","false","disconnected","unreachable"): lab = 0
+                else: lab = None
+            elif isinstance(lab, (int, bool)):
+                lab = int(bool(lab))
+            if isinstance(text, str) and lab is None:
+                lab = parse_yes_no_from_text(text)
+
+        return (text.strip() if isinstance(text, str) else None), lab, query_nodes
+
     if isinstance(rec, list):
         if all(isinstance(x, (str, int)) for x in rec):
             t = " ".join(map(str, rec))
-            return t, parse_yes_no_from_text(t)
-        return None, None
-    return None, None
+            if task == 'shortest_path':
+                lab = parse_distance_label_from_text(t)
+                query_nodes = parse_query_nodes_from_text(t)
+            else:
+                lab = parse_yes_no_from_text(t)
+            return t, lab, query_nodes
+        return None, None, None
+    return None, None, None
 
-def load_examples(path_glob: str) -> List[Dict[str, Any]]:
+def load_examples(path_glob: str, task: str = 'cycle_check', data_fraction: float = 1.0, seed: int = 0) -> List[Dict[str, Any]]:
+    """Load examples from JSON files.
+
+    Args:
+        path_glob: Glob pattern for files
+        task: Task name ('cycle_check' or 'shortest_path')
+        data_fraction: Fraction of data to use (0.0-1.0)
+        seed: Random seed for reproducible sampling
+
+    Returns:
+        List of dicts with keys: text, label, and optionally query_u, query_v
+    """
     files = sorted(glob(path_glob))
     out: List[Dict[str, Any]] = []
     def handle_obj(obj: Any):
         if isinstance(obj, list):
             for rec in obj:
-                t, y = _extract_text_and_label(rec)
-                if t: out.append({"text": t, "label": y})
+                t, y, query_nodes = _extract_text_and_label(rec, task=task)
+                if t:
+                    entry = {"text": t, "label": y}
+                    if query_nodes is not None:
+                        entry["query_u"], entry["query_v"] = query_nodes
+                    out.append(entry)
         else:
-            t, y = _extract_text_and_label(obj)
-            if t: out.append({"text": t, "label": y})
+            t, y, query_nodes = _extract_text_and_label(obj, task=task)
+            if t:
+                entry = {"text": t, "label": y}
+                if query_nodes is not None:
+                    entry["query_u"], entry["query_v"] = query_nodes
+                out.append(entry)
     for fp in files:
         with open(fp, "r") as f:
             raw = f.read().strip()
@@ -73,10 +159,26 @@ def load_examples(path_glob: str) -> List[Dict[str, Any]]:
                 handle_obj(obj)
             except json.JSONDecodeError:
                 t = line
-                out.append({"text": t, "label": parse_yes_no_from_text(t)})
+                if task == 'shortest_path':
+                    lab = parse_distance_label_from_text(t)
+                    query_nodes = parse_query_nodes_from_text(t)
+                    entry = {"text": t, "label": lab}
+                    if query_nodes:
+                        entry["query_u"], entry["query_v"] = query_nodes
+                    out.append(entry)
+                else:
+                    out.append({"text": t, "label": parse_yes_no_from_text(t)})
+
+    # Apply data fraction sampling if needed
+    if data_fraction < 1.0 and len(out) > 0:
+        import random
+        rng = random.Random(seed)
+        n_samples = max(1, int(len(out) * data_fraction))
+        out = rng.sample(out, n_samples)
+
     return out
 
-def load_examples_connected_nodes(path_glob: str) -> List[Dict[str, Any]]:
+def load_examples_connected_nodes(path_glob: str, data_fraction: float = 1.0, seed: int = 0) -> List[Dict[str, Any]]:
     files = sorted(glob(path_glob))
     out: List[Dict[str, Any]] = []
     for fp in files:
@@ -109,6 +211,14 @@ def load_examples_connected_nodes(path_glob: str) -> List[Dict[str, Any]]:
         if lab is None:
             lab = parse_yes_no_from_text(text)
         out.append({"text": text_in, "label": lab, "u": u, "v": v})
+
+    # Apply data fraction sampling if needed
+    if data_fraction < 1.0 and len(out) > 0:
+        import random
+        rng = random.Random(seed)
+        n_samples = max(1, int(len(out) * data_fraction))
+        out = rng.sample(out, n_samples)
+
     return out
 
 def build_vocab_from_texts(texts: List[str], min_freq: int = 1, max_tokens: Optional[int] = None):
