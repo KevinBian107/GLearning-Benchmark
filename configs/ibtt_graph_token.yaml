@@ -3,8 +3,8 @@ dataset:
   task: cycle_check  # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
-  max_len: 512 # Maximum sequence length before truncated (cut graph)
-  max_vocab: 1000 # Maximum unique tokens include special/node_id/tasks
+  max_len: 512 # maximum sequence length before truncated (cut graph)
+  max_vocab: 1000 # maximum unique tokens include special/node_id/tasks
 
 model:
   vocab_size: null # set automatically from training data
@@ -24,8 +24,8 @@ train:
   num_workers: 2  
 
 output:
-  out_dir: runs_gtt
-  run_name: gtt-cycle-check
+  out_dir: runs_ibtt
+  run_name: ibtt-cycle-check
 
 wandb:
   use: true

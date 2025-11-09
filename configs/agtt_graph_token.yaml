@@ -1,0 +1,30 @@
+dataset:
+  graph_token_root: graph-token
+  task: cycle_check  # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
+  algorithm: er # er, ba, sbm, ws, grid
+  use_split_tasks_dirs: true
+  max_len: 512 # maximum sequence length for AutoGraph tokenization
+
+model:
+  d_model: 64
+  nhead: 8
+  nlayers: 4
+  d_ff: 214
+  dropout: 0.1
+  max_pos: 512
+
+train:
+  batch_size: 128
+  epochs: 100
+  lr: 0.001
+  weight_decay: 0.0001
+  seed: 0
+  num_workers: 2
+
+output:
+  out_dir: runs_agtt
+  run_name: agtt-cycle-check
+
+wandb:
+  use: true
+  project: graph-token

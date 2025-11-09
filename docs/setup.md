@@ -8,7 +8,9 @@ For this benchmark repository, we will be using multiple **graph-learning tasks*
 
 Always check on the [datahub.ucsd.edu/services/disk-quota-service/](https://datahub.ucsd.edu/services/disk-quota-service/) to see the quota limit we have first before installing anything.
 
-## Basic Py-Geometric
+All the environment instantiation was tested on an A30 of UCSD's DSMLP system.
+
+## Nativ Graph + Py-Geometric
 To use most of thebasic py-geometric codes on performing graph tasks, we can use the following environment:
 
 ```bash
@@ -20,9 +22,16 @@ conda activate glearning_180a
 To use the [graph-token](https://github.com/alip67/graph-token) code along with the vanilla transformer that we implemented, we will be using the same environment as mentioned above (`glearning_180a`). However, as the tokenization process enters the folder of graph-token, it will automatically create a small venv for doing some of the tokenization required process.
 
 ## Autograph-Tokenized + Transformer
-...
+To use [AutoGraph](https://github.com/BorgwardtLab/AutoGraph) code along with the vanilla transformer that we implemented, we will be using the environment that they specify on their repository. This should run without an issue on DSMLP and we copied over for conviniency:
 
-## Graph GPS
+```bash
+conda env create -f environment.yaml
+conda activate autograph
+cd autograph/evaluation/orca; g++ -O2 -std=c++11 -o orca orca.cpp; cd ../../..
+pip install -e .
+```
+
+## Native Graph + Graph GPS
 [Graph GPS](https://github.com/rampasek/GraphGPS) requires a lot of dependencies (and many of these dependencies are very old and outdated, making running GraphGPS very messy), which may take up to 10GB without importing any data yet. This is why we need to work with GraphGPS conda environment not in the usual conda folder we put them. Instead of relying on the `/home` directory where quota is limited, we will be using the `/DSC180A_FA25_A00` directory where we ahve improved to 50GB of disk quota on DSMLP. Note that we can also use `/scratch` that has high quota, but this will be deleted everytime when we close the pod, so this is not ideal. Use the following command to se where the `/DSC180A_FA25_A00` directory is mounted on first:
 
 ```bash

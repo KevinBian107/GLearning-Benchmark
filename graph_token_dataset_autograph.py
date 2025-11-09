@@ -1,0 +1,255 @@
+"""
+PyG Dataset adapter for graph-token JSON files.
+This creates PyG Data objects that can be used with AutoGraph's tokenizer.
+"""
+
+import os
+import json
+from glob import glob
+from typing import List, Optional, Tuple
+import torch
+from torch_geometric.data import Data, InMemoryDataset
+
+
+def parse_graph_from_text(text: str) -> Tuple[List[int], List[Tuple[int, int]]]:
+    """Parse nodes and edges from tokenized graph text.
+
+    Args:
+        text: Tokenized graph string like "<bos> 0 1 <e> 0 7 <e> 1 6 ... <n> 0 1 2 ..."
+
+    Returns:
+        nodes: List of node IDs
+        edges: List of (source, target) tuples
+    """
+    tokens = text.split()
+    edges = []
+    nodes = []
+
+    # Parse edges: look for pattern "src dst <e>"
+    i = 0
+    while i < len(tokens):
+        # Check for pattern: number number <e>
+        if i + 2 < len(tokens) and tokens[i+2] == '<e>':
+            try:
+                src = int(tokens[i])
+                tgt = int(tokens[i + 1])
+                edges.append((src, tgt))
+                i += 3  # Skip to next edge
+            except ValueError:
+                i += 1
+        elif tokens[i] == '<n>' and i + 1 < len(tokens):
+            # Parse nodes after <n> tag
+            i += 1
+            while i < len(tokens) and tokens[i] not in ['<q>', '<p>', '<eos>']:
+                try:
+                    node_id = int(tokens[i])
+                    nodes.append(node_id)
+                    i += 1
+                except ValueError:
+                    break
+            break
+        else:
+            i += 1
+
+    return nodes, edges
+
+
+def parse_label_from_text(text: str) -> Optional[int]:
+    """Parse label from tokenized graph text.
+
+    Args:
+        text: Tokenized graph string ending with "<p> yes/no <eos>"
+
+    Returns:
+        Binary label (1 for yes, 0 for no) or None if not found
+    """
+    tokens = text.split()
+    # Look for <p> tag followed by yes/no
+    for i, tok in enumerate(tokens):
+        if tok == '<p>' and i + 1 < len(tokens):
+            label_tok = tokens[i + 1].lower()
+            if label_tok == 'yes':
+                return 1
+            elif label_tok == 'no':
+                return 0
+    return None
+
+
+def parse_graph_from_json(record: dict) -> Tuple[List[Tuple[int, int]], int, Optional[int]]:
+    """Parse graph structure from graph-token JSON record.
+
+    Args:
+        record: Dictionary with 'text' and optionally 'nodes', 'edges', 'label' keys
+
+    Returns:
+        edges: List of (source, target) tuples
+        num_nodes: Number of nodes in the graph
+        label: Binary label (1 for yes/cycle, 0 for no)
+    """
+    # Try to get nodes and edges from direct fields first
+    nodes = record.get('nodes', [])
+    edges = record.get('edges', [])
+
+    # If not available, parse from text
+    if not edges:
+        text = record.get('text', '')
+        if text:
+            nodes, edges = parse_graph_from_text(text)
+
+    # Get label
+    label = record.get('label')
+    if label is None:
+        # Try parsing from text
+        text = record.get('text', '')
+        if text:
+            label = parse_label_from_text(text)
+
+    # Determine number of nodes
+    if nodes:
+        num_nodes = max(nodes) + 1 if nodes else 0
+    elif edges:
+        node_set = set()
+        for src, tgt in edges:
+            node_set.add(src)
+            node_set.add(tgt)
+        num_nodes = max(node_set) + 1 if node_set else 0
+    else:
+        num_nodes = 0
+
+    return edges, num_nodes, label
+
+
+class GraphTokenDatasetForAutoGraph(InMemoryDataset):
+    """PyG Dataset for graph-token generated graphs (for use with AutoGraph tokenizer).
+
+    Loads graphs from JSON files and converts them to PyG Data objects
+    that can be tokenized by AutoGraph's Graph2TrailTokenizer.
+    """
+
+    def __init__(
+        self,
+        root: str,
+        task: str = 'cycle_check',
+        algorithm: str = 'er',
+        split: str = 'train',
+        use_split_tasks_dirs: bool = True,
+        transform=None,
+        pre_transform=None,
+        pre_filter=None,
+    ):
+        """
+        Args:
+            root: Root directory (graph-token repo path)
+            task: Task name (cycle_check, connected_nodes, etc.)
+            algorithm: Graph generation algorithm (er, ba, sbm, etc.)
+            split: Data split (train, val, test)
+            use_split_tasks_dirs: Use tasks_train/tasks_test structure
+        """
+        self.task = task
+        self.algorithm = algorithm
+        self.split = split
+        self.use_split_tasks_dirs = use_split_tasks_dirs
+        self._root = root
+
+        super().__init__(root, transform, pre_transform, pre_filter)
+        self.data, self.slices = torch.load(self.processed_paths[0])
+
+    @property
+    def raw_dir(self) -> str:
+        """Directory containing raw JSON files."""
+        if self.use_split_tasks_dirs:
+            if self.split in ['val', 'test']:
+                base = os.path.join(self._root, 'tasks_test', self.task, self.algorithm)
+            else:
+                base = os.path.join(self._root, 'tasks_train', self.task, self.algorithm)
+        else:
+            base = os.path.join(self._root, 'tasks', self.task, self.algorithm)
+
+        split_dir = os.path.join(base, self.split)
+
+        # For validation, check if it exists, otherwise use test
+        if self.split == 'val' and self.use_split_tasks_dirs:
+            json_pattern = os.path.join(split_dir, '*.json')
+            if len(glob(json_pattern)) == 0:
+                split_dir = os.path.join(base, 'test')
+
+        return split_dir
+
+    @property
+    def processed_dir(self) -> str:
+        """Directory to save processed data."""
+        base_name = f"autograph_{self.task}_{self.algorithm}_{self.split}"
+        if self.use_split_tasks_dirs:
+            base_name += "_split"
+        return os.path.join(self._root, 'processed', base_name)
+
+    @property
+    def raw_file_names(self) -> List[str]:
+        return []
+
+    @property
+    def processed_file_names(self) -> List[str]:
+        return ['data.pt']
+
+    def download(self):
+        """Download not needed - assumes graph-token already generated data."""
+        pass
+
+    def process(self):
+        """Process JSON files into PyG Data objects."""
+        json_pattern = os.path.join(self.raw_dir, '*.json')
+        json_files = sorted(glob(json_pattern))
+
+        if len(json_files) == 0:
+            raise RuntimeError(
+                f"No JSON files found at {json_pattern}. "
+                f"Did you run the graph-token task generator?"
+            )
+
+        data_list = []
+
+        for json_file in json_files:
+            with open(json_file, 'r') as f:
+                content = json.load(f)
+
+            # Handle both list and single dict formats
+            if isinstance(content, list):
+                records = content
+            else:
+                records = [content]
+
+            for record in records:
+                # Parse graph structure from JSON
+                edges, num_nodes, label = parse_graph_from_json(record)
+
+                if num_nodes == 0:
+                    continue  # Skip empty graphs
+
+                if label is None:
+                    continue  # Skip if no label found
+
+                # Create edge_index tensor
+                if len(edges) > 0:
+                    edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+                else:
+                    # Empty graph - no edges
+                    edge_index = torch.empty((2, 0), dtype=torch.long)
+
+                # Create PyG Data object (minimal - AutoGraph doesn't need node features)
+                data = Data(
+                    edge_index=edge_index,
+                    y=torch.tensor([label], dtype=torch.long),
+                    num_nodes=num_nodes,
+                )
+
+                if self.pre_filter is not None and not self.pre_filter(data):
+                    continue
+
+                if self.pre_transform is not None:
+                    data = self.pre_transform(data)
+
+                data_list.append(data)
+
+        # Save processed data
+        data, slices = self.collate(data_list)
+        torch.save((data, slices), self.processed_paths[0])

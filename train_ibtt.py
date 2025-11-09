@@ -103,18 +103,16 @@ def load_config(config_path):
     return config
 
 def main(config):
-    # Extract config sections
     dataset_cfg = config['dataset']
     model_cfg = config['model']
     train_cfg = config['train']
     output_cfg = config['output']
     wandb_cfg = config['wandb']
 
-    # Set random seeds
     random.seed(train_cfg['seed'])
     torch.manual_seed(train_cfg['seed'])
 
-    # Resolve dataset globs (supports tasks/ or tasks_{train,test}/)
+    # dataset globs (supports tasks/ or tasks_{train,test}/)
     train_glob, val_glob, test_glob = resolve_split_globs(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],

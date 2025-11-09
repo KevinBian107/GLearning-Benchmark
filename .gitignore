@@ -13,6 +13,7 @@ graph-token/processed/
 # Repos
 GraphGPS/
 graph-token/
+AutoGraph/
 
 # Envs
 graphenv/
