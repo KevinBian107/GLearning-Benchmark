@@ -12,6 +12,7 @@ model:
   d_ff: 214
   dropout: 0.1
   max_pos: 512
+  num_classes: 2  # 2 for cycle_check, 7 for shortest_path
 
 train:
   batch_size: 128
