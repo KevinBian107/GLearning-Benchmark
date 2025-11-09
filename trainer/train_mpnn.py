@@ -9,7 +9,7 @@ from torch_geometric.nn import GINConv, global_mean_pool, global_add_pool, globa
 from torch_geometric.loader import DataLoader
 import wandb
 
-from graph_token_dataset import GraphTokenDataset
+from graph_data_loader import GraphTokenDataset
 
 
 class MPNN(nn.Module):

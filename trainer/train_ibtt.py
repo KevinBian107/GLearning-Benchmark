@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import wandb
 
-from data_loader import (
+from graph_data_loader import (
     SPECIAL,
     load_examples,
     build_vocab_from_texts,

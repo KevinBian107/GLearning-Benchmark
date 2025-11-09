@@ -12,12 +12,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 import wandb
 
-# we need to add both AutoGraph/ and AutoGraph/autograph to handle the package structure
-autograph_root = os.path.join(os.path.dirname(__file__), 'AutoGraph')
+# Since train_agtt.py is in trainer/, need to go up one level to find AutoGraph/
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+autograph_root = os.path.join(parent_dir, 'AutoGraph')
 sys.path.insert(0, autograph_root)
 
 from autograph.datamodules.data.tokenizer import Graph2TrailTokenizer
-from graph_token_dataset_autograph import GraphTokenDatasetForAutoGraph
+from graph_data_loader import GraphTokenDatasetForAutoGraph
 
 
 class SimpleTransformer(nn.Module):

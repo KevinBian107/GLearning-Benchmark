@@ -51,7 +51,7 @@ This should automatically setup the environment for the graph-token repository a
 
 ```bash
 conda activate glearning_180a
-python train_ibtt.py
+python train.py --model ibtt
 ```
 
 ### AutoGraph Trail Tokenization Transformer (AGTT)
@@ -59,7 +59,7 @@ This method uses AutoGraph's trail-based tokenization (SENT algorithm) to conver
 
 ```bash
 conda activate autograph
-python train_agtt.py
+python train.py --model abtt
 ```
 
 **Note**: AGTT uses the same transformer architecture as IBTT but with different tokenization. It loads native graphs (like MPNN/GraphGPS) and applies AutoGraph's trail-based tokenization instead of index-based tokenization. This enables comparing **tokenization strategies** while keeping the model architecture constant.
@@ -70,7 +70,7 @@ Similarly, we can run a GPS model upon the native graph like the following:
 
 ```bash
 conda activate graphgps
-python train_ggps.py
+python train.py --model ggps
 ```
 
 **Note**: GraphGPS uses a more complex config structure with sections like `gt` (graph transformer), `gnn`, and `optim`. See [docs/ggps.md](docs/ggps.md) for details on the architecture.
@@ -81,7 +81,7 @@ At last, using similar setup as GPS, we can perform MPNN upon the native graph a
 
 ```bash
 conda activate glearning_180a
-python train_mpnn.py
+python train.py --model mpnn
 ```
 
 **Note**: Our MPNN implementation uses GIN (Graph Isomorphism Network) layers, which are provably as expressive as the Weisfeiler-Leman graph isomorphism test. See [docs/mpnn.md](docs/mpnn.md) for detailed architecture information.

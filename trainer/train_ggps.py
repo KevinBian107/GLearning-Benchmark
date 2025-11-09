@@ -17,13 +17,21 @@ import wandb
 
 # GraphGPS modules
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'GraphGPS'))
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(parent_dir, 'GraphGPS'))
 import graphgps  # noqa, register custom modules
 from graphgps.optimizer.extra_optimizers import ExtendedSchedulerConfig
 from torch_geometric.graphgym.optim import create_optimizer, create_scheduler, OptimizerConfig
 
 # graph-token dataset
-from graph_token_dataset import GraphTokenDataset
+from graph_data_loader import GraphTokenDataset
+
+
+def load_config(config_path):
+    """Load config from YAML file."""
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
 
 
 def setup_cfg_from_config(config_dict):
