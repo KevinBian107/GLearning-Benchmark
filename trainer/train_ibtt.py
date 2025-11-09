@@ -121,9 +121,12 @@ def main(config):
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
     )
 
-    train_ex = load_examples(train_glob, task=dataset_cfg['task'])
-    val_ex = load_examples(val_glob, task=dataset_cfg['task'])
-    test_ex = load_examples(test_glob, task=dataset_cfg['task'])
+    data_fraction = dataset_cfg.get('data_fraction', 1.0)
+    seed = train_cfg['seed']
+
+    train_ex = load_examples(train_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
+    val_ex = load_examples(val_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
+    test_ex = load_examples(test_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
     
     def show_sample(split_name, examples):
         if not examples:

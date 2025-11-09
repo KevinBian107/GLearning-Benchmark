@@ -111,6 +111,8 @@ class GraphTokenDataset(InMemoryDataset):
         algorithm: str = 'er',
         split: str = 'train',
         use_split_tasks_dirs: bool = True,
+        data_fraction: float = 1.0,
+        seed: int = 0,
         transform=None,
         pre_transform=None,
         pre_filter=None,
@@ -122,11 +124,15 @@ class GraphTokenDataset(InMemoryDataset):
             algorithm: Graph generation algorithm (er, ba, sbm, etc.)
             split: Data split (train, val, test)
             use_split_tasks_dirs: Use tasks_train/tasks_test structure
+            data_fraction: Fraction of data to use (0.0-1.0)
+            seed: Random seed for reproducible sampling
         """
         self.task = task
         self.algorithm = algorithm
         self.split = split
         self.use_split_tasks_dirs = use_split_tasks_dirs
+        self.data_fraction = max(0.0, min(1.0, data_fraction))  # Clamp to [0, 1]
+        self.seed = seed
         self._root = root
 
         super().__init__(root, transform, pre_transform, pre_filter)
@@ -162,6 +168,9 @@ class GraphTokenDataset(InMemoryDataset):
         base_name = f"{self.task}_{self.algorithm}_{self.split}"
         if self.use_split_tasks_dirs:
             base_name += "_split"
+        if self.data_fraction < 1.0:
+            # Include fraction in cache key to avoid conflicts
+            base_name += f"_frac{self.data_fraction:.2f}"
         return os.path.join(self._root, 'processed', base_name)
 
     @property
@@ -283,6 +292,15 @@ class GraphTokenDataset(InMemoryDataset):
                     data = self.pre_transform(data)
 
                 data_list.append(data)
+
+        # Apply data fraction sampling if needed
+        if self.data_fraction < 1.0 and len(data_list) > 0:
+            import random
+            rng = random.Random(self.seed)
+            original_size = len(data_list)
+            n_samples = max(1, int(original_size * self.data_fraction))
+            data_list = rng.sample(data_list, n_samples)
+            print(f"[{self.split}] Sampled {n_samples}/{original_size} graphs (fraction={self.data_fraction})")
 
         # Save processed data
         data, slices = self.collate(data_list)

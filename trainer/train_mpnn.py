@@ -140,12 +140,17 @@ def main(config):
     random.seed(train_cfg['seed'])
     torch.manual_seed(train_cfg['seed'])
 
+    data_fraction = dataset_cfg.get('data_fraction', 1.0)
+    seed = train_cfg['seed']
+
     train_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
         algorithm=dataset_cfg['algorithm'],
         split='train',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
     val_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
@@ -153,6 +158,8 @@ def main(config):
         algorithm=dataset_cfg['algorithm'],
         split='val',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
     test_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
@@ -160,6 +167,8 @@ def main(config):
         algorithm=dataset_cfg['algorithm'],
         split='test',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
 
     print(f"#train: {len(train_dataset)} | #val: {len(val_dataset)} | #test: {len(test_dataset)}")

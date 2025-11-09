@@ -171,12 +171,17 @@ def main(config):
 
     # load PyG datasets (graph-native format)
     print("Loading graph-native datasets...")
+    data_fraction = dataset_cfg.get('data_fraction', 1.0)
+    seed = train_cfg['seed']
+
     train_pyg = GraphTokenDatasetForAutoGraph(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
         algorithm=dataset_cfg['algorithm'],
         split='train',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
 
     val_pyg = GraphTokenDatasetForAutoGraph(
@@ -185,6 +190,8 @@ def main(config):
         algorithm=dataset_cfg['algorithm'],
         split='val',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
 
     test_pyg = GraphTokenDatasetForAutoGraph(
@@ -193,6 +200,8 @@ def main(config):
         algorithm=dataset_cfg['algorithm'],
         split='test',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        data_fraction=data_fraction,
+        seed=seed,
     )
 
     print(f"#train: {len(train_pyg)} | #val: {len(val_pyg)} | #test: {len(test_pyg)}")

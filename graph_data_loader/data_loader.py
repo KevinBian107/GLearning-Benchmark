@@ -109,12 +109,14 @@ def _extract_text_and_label(rec: Any, task: str = 'cycle_check') -> Tuple[Option
         return None, None, None
     return None, None, None
 
-def load_examples(path_glob: str, task: str = 'cycle_check') -> List[Dict[str, Any]]:
+def load_examples(path_glob: str, task: str = 'cycle_check', data_fraction: float = 1.0, seed: int = 0) -> List[Dict[str, Any]]:
     """Load examples from JSON files.
 
     Args:
         path_glob: Glob pattern for files
         task: Task name ('cycle_check' or 'shortest_path')
+        data_fraction: Fraction of data to use (0.0-1.0)
+        seed: Random seed for reproducible sampling
 
     Returns:
         List of dicts with keys: text, label, and optionally query_u, query_v
@@ -166,9 +168,17 @@ def load_examples(path_glob: str, task: str = 'cycle_check') -> List[Dict[str, A
                     out.append(entry)
                 else:
                     out.append({"text": t, "label": parse_yes_no_from_text(t)})
+
+    # Apply data fraction sampling if needed
+    if data_fraction < 1.0 and len(out) > 0:
+        import random
+        rng = random.Random(seed)
+        n_samples = max(1, int(len(out) * data_fraction))
+        out = rng.sample(out, n_samples)
+
     return out
 
-def load_examples_connected_nodes(path_glob: str) -> List[Dict[str, Any]]:
+def load_examples_connected_nodes(path_glob: str, data_fraction: float = 1.0, seed: int = 0) -> List[Dict[str, Any]]:
     files = sorted(glob(path_glob))
     out: List[Dict[str, Any]] = []
     for fp in files:
@@ -201,6 +211,14 @@ def load_examples_connected_nodes(path_glob: str) -> List[Dict[str, Any]]:
         if lab is None:
             lab = parse_yes_no_from_text(text)
         out.append({"text": text_in, "label": lab, "u": u, "v": v})
+
+    # Apply data fraction sampling if needed
+    if data_fraction < 1.0 and len(out) > 0:
+        import random
+        rng = random.Random(seed)
+        n_samples = max(1, int(len(out) * data_fraction))
+        out = rng.sample(out, n_samples)
+
     return out
 
 def build_vocab_from_texts(texts: List[str], min_freq: int = 1, max_tokens: Optional[int] = None):

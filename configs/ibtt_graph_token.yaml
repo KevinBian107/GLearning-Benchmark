@@ -3,6 +3,7 @@ dataset:
   task: shortest_path  # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
+  data_fraction: 0.2 # fraction of data to use (0.0-1.0), same for train/val/test
   max_len: 512 # maximum sequence length before truncated (cut graph)
   max_vocab: 1000 # maximum unique tokens include special/node_id/tasks
 

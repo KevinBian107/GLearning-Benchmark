@@ -212,6 +212,7 @@ def main(config_dict):
     algorithm = data_cfg.get('algorithm', 'er')
     graph_token_root = data_cfg.get('graph_token_root', 'graph-token')
     use_split_tasks_dirs = data_cfg.get('use_split_tasks_dirs', True)
+    data_fraction = data_cfg.get('data_fraction', 1.0)
 
     logging.info(f"Loading {task} dataset with algorithm {algorithm}")
 
@@ -221,6 +222,8 @@ def main(config_dict):
         algorithm=algorithm,
         split='train',
         use_split_tasks_dirs=use_split_tasks_dirs,
+        data_fraction=data_fraction,
+        seed=seed,
     )
 
     try:
@@ -230,6 +233,8 @@ def main(config_dict):
             algorithm=algorithm,
             split='val',
             use_split_tasks_dirs=use_split_tasks_dirs,
+            data_fraction=data_fraction,
+            seed=seed,
         )
     except RuntimeError:
         logging.warning("No validation set found, using training set for validation")
@@ -242,6 +247,8 @@ def main(config_dict):
             algorithm=algorithm,
             split='test',
             use_split_tasks_dirs=use_split_tasks_dirs,
+            data_fraction=data_fraction,
+            seed=seed,
         )
     except RuntimeError:
         logging.warning("No test set found")
