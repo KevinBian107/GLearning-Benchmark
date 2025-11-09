@@ -1,6 +1,6 @@
 dataset:
   graph_token_root: graph-token
-  task: cycle_check  # cycle_check, edge_existence, node_degree, node_count, edge_count, connected_nodes
+  task: cycle_check  # cycle_check, connected_nodes
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
   max_len: 512 # maximum sequence length before truncated (cut graph)
