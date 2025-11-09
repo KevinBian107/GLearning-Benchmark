@@ -27,6 +27,35 @@ from torch_geometric.graphgym.optim import create_optimizer, create_scheduler, O
 from graph_data_loader import GraphTokenDataset
 
 
+class GPSWrapper(nn.Module):
+    """
+    Wrapper around GraphGym GPS model to add task-specific functionality:
+    - Query encoding for shortest_path task
+    - Task-aware output head (binary vs multi-class)
+    """
+    def __init__(self, gps_model, task='cycle_check', num_classes=2):
+        super().__init__()
+        self.gps_model = gps_model
+        self.task = task
+        self.num_classes = num_classes
+
+    def forward(self, batch):
+        # Add query encoding for shortest_path task
+        if self.task == 'shortest_path' and hasattr(batch, 'query_u') and hasattr(batch, 'query_v'):
+            from graph_data_loader import add_query_encoding_to_features
+            # Add binary positional encoding for query nodes
+            # Handle batched query_u and query_v
+            if batch.query_u.dim() > 0:
+                query_u = batch.query_u[0].item()
+                query_v = batch.query_v[0].item()
+                batch.x = add_query_encoding_to_features(batch.x, query_u, query_v)
+
+        # Forward through GPS model
+        out = self.gps_model(batch)
+
+        return out
+
+
 def load_config(config_path):
     """Load config from YAML file."""
     with open(config_path, 'r') as f:
@@ -70,16 +99,23 @@ def setup_cfg_from_config(config_dict):
     return cfg
 
 
-def accuracy(pred, target):
-    """Calculate accuracy for binary classification with BCE loss."""
-    # pred is (batch_size, 1) or (batch_size,) with logits
-    # target is (batch_size,) with 0/1
-    # Apply sigmoid and threshold at 0.5
-    pred_binary = (torch.sigmoid(pred.squeeze()) > 0.5).long()
-    return (pred_binary == target.long()).float().mean().item()
+def accuracy(pred, target, task='cycle_check'):
+    """Calculate accuracy for binary or multi-class classification."""
+    if task == 'cycle_check':
+        # Binary classification with BCE loss
+        # pred is (batch_size, 1) or (batch_size,) with logits
+        # Apply sigmoid and threshold at 0.5
+        pred_binary = (torch.sigmoid(pred.squeeze()) > 0.5).long()
+        return (pred_binary == target.long()).float().mean().item()
+    else:
+        # Multi-class classification (shortest_path)
+        # pred is (batch_size, num_classes) with logits
+        # target is (batch_size,) with class indices
+        pred_classes = pred.argmax(dim=-1)
+        return (pred_classes == target).float().mean().item()
 
 
-def train_epoch(model, loader, optimizer, criterion, device):
+def train_epoch(model, loader, optimizer, criterion, device, task='cycle_check'):
     """Train for one epoch."""
     model.train()
     total_loss = 0
@@ -97,14 +133,17 @@ def train_epoch(model, loader, optimizer, criterion, device):
         else:
             pred = out
 
-        # labels and convert to float for BCE loss
+        # Handle labels based on task
         target = batch.y.squeeze(-1) if batch.y.dim() > 1 else batch.y
-        target = target.float()
 
-        # squeeze pred to match target shape
-        pred = pred.squeeze()
+        if task == 'cycle_check':
+            # Binary classification with BCE loss - need float targets
+            target = target.float()
+            pred = pred.squeeze()
+        else:
+            # Multi-class classification - need long targets
+            target = target.long()
 
-        # both pred and target should be (batch_size,)
         loss = criterion(pred, target)
 
         loss.backward()
@@ -113,14 +152,14 @@ def train_epoch(model, loader, optimizer, criterion, device):
         optimizer.step()
 
         total_loss += loss.item() * batch.num_graphs
-        total_acc += accuracy(pred, target) * batch.num_graphs
+        total_acc += accuracy(pred, target, task=task) * batch.num_graphs
         num_graphs += batch.num_graphs
 
     return total_loss / num_graphs, total_acc / num_graphs
 
 
 @torch.no_grad()
-def eval_epoch(model, loader, criterion, device):
+def eval_epoch(model, loader, criterion, device, task='cycle_check'):
     """Evaluate for one epoch."""
     model.eval()
     total_loss = 0
@@ -137,14 +176,21 @@ def eval_epoch(model, loader, criterion, device):
         else:
             pred = out
 
+        # Handle labels based on task
         target = batch.y.squeeze(-1) if batch.y.dim() > 1 else batch.y
-        target = target.float()
 
-        pred = pred.squeeze()
+        if task == 'cycle_check':
+            # Binary classification with BCE loss - need float targets
+            target = target.float()
+            pred = pred.squeeze()
+        else:
+            # Multi-class classification - need long targets
+            target = target.long()
+
         loss = criterion(pred, target)
 
         total_loss += loss.item() * batch.num_graphs
-        total_acc += accuracy(pred, target) * batch.num_graphs
+        total_acc += accuracy(pred, target, task=task) * batch.num_graphs
         num_graphs += batch.num_graphs
 
     return total_loss / num_graphs, total_acc / num_graphs
@@ -232,18 +278,31 @@ def main(config_dict):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     auto_select_device()
 
-    dim_in = train_dataset[0].x.size(1) if train_dataset[0].x is not None else 1
-    dim_out = 1  # binary classification with BCE loss (single sigmoid output)
+    # Determine number of classes based on task
+    if task == 'shortest_path':
+        num_classes = 7  # len1 through len7
+        dim_out = num_classes
+        # For shortest_path, add 2 extra dimensions for query encoding
+        dim_in = train_dataset[0].x.size(1) if train_dataset[0].x is not None else 1
+        dim_in += 2  # Add query encoding dimensions
+    else:  # cycle_check or other binary tasks
+        num_classes = 2
+        dim_out = 1  # Binary classification with BCE loss (single sigmoid output)
+        dim_in = train_dataset[0].x.size(1) if train_dataset[0].x is not None else 1
 
     # create_model() reads from cfg.share.dim_in and cfg.share.dim_out
     cfg.share.dim_in = dim_in
     cfg.share.dim_out = dim_out
 
-    logging.info(f"Creating GPSModel with dim_in={dim_in}, dim_out={dim_out} (BCE loss)")
+    logging.info(f"Task: {task} | num_classes: {num_classes}")
+    logging.info(f"Creating GPSModel with dim_in={dim_in}, dim_out={dim_out}")
     logging.info(f"Config check - cfg.share.dim_in={cfg.share.dim_in}, cfg.share.dim_out={cfg.share.dim_out}")
 
     # create_model() will read dim_in/dim_out from cfg.share
-    model = create_model()
+    gps_model = create_model()
+
+    # Wrap with GPSWrapper to add task-specific functionality
+    model = GPSWrapper(gps_model, task=task, num_classes=num_classes)
 
     logging.info(model)
     num_params = params_count(model)
@@ -275,8 +334,11 @@ def main(config_dict):
         )
     )
 
-    # BCE for binary classification with single sigmoid output
-    criterion = nn.BCEWithLogitsLoss()
+    # Select loss function based on task
+    if task == 'cycle_check':
+        criterion = nn.BCEWithLogitsLoss()
+    else:
+        criterion = nn.CrossEntropyLoss()
 
     use_wandb = wandb_cfg.get('use', False)
     wandb_project = wandb_cfg.get('project', 'graph-token')
@@ -298,8 +360,8 @@ def main(config_dict):
     best_state = None
 
     for epoch in range(1, epochs + 1):
-        train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_loss, val_acc = eval_epoch(model, val_loader, criterion, device)
+        train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion, device, task=task)
+        val_loss, val_acc = eval_epoch(model, val_loader, criterion, device, task=task)
 
         log_dict = {
             'epoch': epoch,
@@ -332,7 +394,7 @@ def main(config_dict):
     # test on best model
     if test_dataset and best_state:
         model.load_state_dict(best_state)
-        test_loss, test_acc = eval_epoch(model, test_loader, criterion, device)
+        test_loss, test_acc = eval_epoch(model, test_loader, criterion, device, task=task)
         logging.info(f"Test: {test_loss:.4f}/{test_acc:.4f}")
 
         if use_wandb:
