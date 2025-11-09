@@ -15,6 +15,7 @@ from graph_data_loader import GraphTokenDataset
 class MPNN(nn.Module):
     """
     Simple Message Passing Neural Network using GIN (Graph Isomorphism Network) layers.
+    Supports both cycle_check (binary) and shortest_path (multi-class with query encoding).
     """
     def __init__(
         self,
@@ -23,10 +24,16 @@ class MPNN(nn.Module):
         num_layers: int = 3,
         dropout: float = 0.0,
         pooling: str = 'mean',
+        num_classes: int = 2,
+        task: str = 'cycle_check',
     ):
         super().__init__()
         self.pooling = pooling
-        self.node_encoder = nn.Linear(in_dim, hidden_dim)
+        self.task = task
+
+        # For shortest_path, input features include 2 extra dimensions for query encoding
+        actual_in_dim = in_dim + 2 if task == 'shortest_path' else in_dim
+        self.node_encoder = nn.Linear(actual_in_dim, hidden_dim)
 
         # GIN convolution layers with MLP
         self.convs = nn.ModuleList()
@@ -44,11 +51,18 @@ class MPNN(nn.Module):
             nn.BatchNorm1d(hidden_dim) for _ in range(num_layers)
         ])
 
-        # classifier head for binary prediction (2 classes like GTT)
-        self.classifier = nn.Linear(hidden_dim, 2)
+        # Task-aware classifier head
+        self.classifier = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
+
+        # Add query encoding for shortest_path task
+        if self.task == 'shortest_path' and hasattr(data, 'query_u') and hasattr(data, 'query_v'):
+            # Import here to avoid circular dependency
+            from graph_data_loader import add_query_encoding_to_features
+            # Add binary positional encoding for query nodes
+            x = add_query_encoding_to_features(x, data.query_u[0].item(), data.query_v[0].item())
 
         # encode node features
         x = self.node_encoder(x)
@@ -165,12 +179,21 @@ def main(config):
     test_dl = DataLoader(test_dataset, batch_size=train_cfg['batch_size'], shuffle=False, num_workers=train_cfg['num_workers'])
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Determine number of classes based on task
+    if dataset_cfg['task'] == 'shortest_path':
+        num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
+    else:  # cycle_check or other binary tasks
+        num_classes = model_cfg.get('num_classes', 2)
+
     model = MPNN(
         in_dim=model_cfg['in_dim'],
         hidden_dim=model_cfg['hidden_dim'],
         num_layers=model_cfg['num_layers'],
         dropout=model_cfg['dropout'],
         pooling=model_cfg['pooling'],
+        num_classes=num_classes,
+        task=dataset_cfg['task'],
     ).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'], weight_decay=train_cfg['weight_decay'])

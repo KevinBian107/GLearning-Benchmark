@@ -27,6 +27,7 @@ class SimpleTransformer(nn.Module):
         d_ff: int = 512,
         p_drop: float = 0.1,
         max_pos: int = 4096,
+        num_classes: int = 2,
     ):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, d_model)
@@ -40,7 +41,7 @@ class SimpleTransformer(nn.Module):
         )
         self.enc = nn.TransformerEncoder(enc_layer, num_layers=nlayers)
         self.norm = nn.LayerNorm(d_model)
-        self.cls = nn.Linear(d_model, 2)
+        self.cls = nn.Linear(d_model, num_classes)
 
         nn.init.trunc_normal_(self.embed.weight, std=0.02)
         nn.init.trunc_normal_(self.pos.weight, std=0.02)
@@ -120,9 +121,9 @@ def main(config):
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
     )
 
-    train_ex = load_examples(train_glob)
-    val_ex = load_examples(val_glob)
-    test_ex = load_examples(test_glob)
+    train_ex = load_examples(train_glob, task=dataset_cfg['task'])
+    val_ex = load_examples(val_glob, task=dataset_cfg['task'])
+    test_ex = load_examples(test_glob, task=dataset_cfg['task'])
     
     def show_sample(split_name, examples):
         if not examples:
@@ -156,6 +157,13 @@ def main(config):
     test_dl = DataLoader(test_ds,  batch_size=train_cfg['batch_size'], shuffle=False, num_workers=train_cfg['num_workers'], collate_fn=coll)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Determine number of classes based on task
+    if dataset_cfg['task'] == 'shortest_path':
+        num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
+    else:  # cycle_check or other binary tasks
+        num_classes = model_cfg.get('num_classes', 2)
+
     model = SimpleTransformer(
         vocab_size=len(vocab),
         d_model=model_cfg['d_model'],
@@ -164,6 +172,7 @@ def main(config):
         d_ff=model_cfg['d_ff'],
         p_drop=model_cfg['dropout'],
         max_pos=model_cfg['max_pos'],
+        num_classes=num_classes,
     ).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'], weight_decay=train_cfg['weight_decay'])

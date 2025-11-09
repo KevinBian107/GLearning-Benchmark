@@ -1,6 +1,6 @@
 data:
   graph_token_root: graph-token
-  task: cycle_check # cycle_check, connected_nodes
+  task: cycle_check # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
 

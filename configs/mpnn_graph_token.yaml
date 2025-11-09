@@ -1,15 +1,16 @@
 dataset:
   graph_token_root: graph-token
-  task: cycle_check # cycle_check, connected_nodes
+  task: shortest_path # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
 
 model:
   in_dim: 1 # input feature dimension (constant features for synthetic graphs)
-  hidden_dim: 64 
-  num_layers: 4 
-  dropout: 0.1 
+  hidden_dim: 64
+  num_layers: 4
+  dropout: 0.1
   pooling: mean # mean, add, or max
+  num_classes: 7 # 7 for shortest_path (len1-len7), 2 for cycle_check
 
 train:
   batch_size: 32
@@ -21,7 +22,7 @@ train:
 
 output:
   out_dir: runs_mpnn
-  run_name: mpnn-cycle-check
+  run_name: mpnn-shortest-path
 
 wandb:
   use: true

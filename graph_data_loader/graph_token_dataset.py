@@ -7,6 +7,29 @@ from typing import List, Optional, Tuple
 import torch
 from torch_geometric.data import Data, InMemoryDataset
 
+# Import parsing functions from data_loader
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from graph_data_loader.data_loader import parse_distance_label_from_text, parse_query_nodes_from_text
+
+
+def add_query_encoding_to_features(x: torch.Tensor, query_u: int, query_v: int) -> torch.Tensor:
+    """Add binary query encodings to node features for shortest_path task.
+
+    Args:
+        x: Node features [num_nodes, feature_dim]
+        query_u: Source node ID
+        query_v: Target node ID
+
+    Returns:
+        Augmented features [num_nodes, feature_dim + 2] with binary flags for source/target
+    """
+    num_nodes = x.size(0)
+    query_encoding = torch.zeros(num_nodes, 2, dtype=x.dtype, device=x.device)
+    query_encoding[query_u, 0] = 1.0  # Mark source node
+    query_encoding[query_v, 1] = 1.0  # Mark target node
+    return torch.cat([x, query_encoding], dim=1)
+
 
 def parse_graph_from_text(text: str) -> Tuple[List[int], List[Tuple[int, int]]]:
     """Parse nodes and edges from tokenized graph text.
@@ -95,7 +118,7 @@ class GraphTokenDataset(InMemoryDataset):
         """
         Args:
             root: Root directory (graph-token repo path)
-            task: Task name (cycle_check, connected_nodes, etc.)
+            task: Task name (cycle_check, shortest_path, etc.)
             algorithm: Graph generation algorithm (er, ba, sbm, etc.)
             split: Data split (train, val, test)
             use_split_tasks_dirs: Use tasks_train/tasks_test structure
@@ -199,12 +222,25 @@ class GraphTokenDataset(InMemoryDataset):
                 if len(nodes) == 0:
                     continue  # Skip empty graphs
 
-                # Parse label
+                # Parse label based on task
                 label = record.get('label')
-                if label is None:
-                    label = parse_label_from_text(text)
-                if label is None:
-                    continue  # Skip if no label found
+                query_u, query_v = None, None
+
+                if self.task == 'shortest_path':
+                    # Parse distance label and query nodes
+                    if label is None:
+                        label = parse_distance_label_from_text(text)
+                    query_nodes = parse_query_nodes_from_text(text)
+                    if query_nodes is not None:
+                        query_u, query_v = query_nodes
+                    if label is None or query_nodes is None:
+                        continue  # Skip if missing query or label
+                else:
+                    # Binary tasks like cycle_check
+                    if label is None:
+                        label = parse_label_from_text(text)
+                    if label is None:
+                        continue  # Skip if no label found
 
                 # Convert to PyG format
                 num_nodes = max(nodes) + 1 if nodes else 0
@@ -216,9 +252,9 @@ class GraphTokenDataset(InMemoryDataset):
                     # Empty graph - no edges
                     edge_index = torch.empty((2, 0), dtype=torch.long)
 
-                # Create node features (one-hot encoding of node IDs)
-                # For synthetic graphs, we use constant features or one-hot
-                x = torch.ones((num_nodes, 1), dtype=torch.float)  # Constant features
+                # Create node features (constant features for now)
+                # For shortest_path, query encodings will be added by the model
+                x = torch.ones((num_nodes, 1), dtype=torch.float)
 
                 # Create edge attributes (dummy - constant vectors for unweighted graphs)
                 # GINE requires edge features to match node feature dim after encoding
@@ -230,10 +266,15 @@ class GraphTokenDataset(InMemoryDataset):
                 data = Data(
                     x=x,
                     edge_index=edge_index,
-                    edge_attr=edge_attr,  # Add edge attributes
+                    edge_attr=edge_attr,
                     y=torch.tensor([label], dtype=torch.long),
                     num_nodes=num_nodes,
                 )
+
+                # Add query nodes for shortest_path task
+                if query_u is not None and query_v is not None:
+                    data.query_u = torch.tensor([query_u], dtype=torch.long)
+                    data.query_v = torch.tensor([query_v], dtype=torch.long)
 
                 if self.pre_filter is not None and not self.pre_filter(data):
                     continue

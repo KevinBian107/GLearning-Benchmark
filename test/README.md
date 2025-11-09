@@ -169,12 +169,4 @@ Testing untrained MPNN model (random weights)...
 python test/check_input.py
 ```
 
-### 4. `check_agtt.py` - AutoGraph Intergration Checker
-
-**Purpose**: Check the validity of converty the native graph to Autograph tokenization.
-
-```bash
-python test/check_agtt.py
-```
-
 ---
