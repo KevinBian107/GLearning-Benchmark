@@ -1,6 +1,6 @@
 """Train GIN-MPNN on native graph structures"""
 
-import os, argparse, random
+import os, argparse, random, time
 import yaml
 import torch
 import torch.nn as nn
@@ -208,44 +208,86 @@ def main(config):
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'], weight_decay=train_cfg['weight_decay'])
     crit = nn.CrossEntropyLoss()
 
+    # Count model parameters
+    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model parameters: {num_params:,}")
+
     # Initialize W&B if enabled
     if wandb_cfg['use']:
         wandb.init(project=wandb_cfg['project'], name=output_cfg['run_name'], config=config)
         wandb.watch(model, log="all", log_freq=100)
+        wandb.log({"model/num_parameters": num_params})
 
     os.makedirs(output_cfg['out_dir'], exist_ok=True)
     best_val, best_state = -1.0, None
 
+    # Timing and efficiency tracking
+    training_start_time = time.time()
+    num_train_graphs = len(train_dataset)
+    initial_val_acc = 0.0
+    time_to_best = 0.0
+
     for epoch in range(1, train_cfg['epochs'] + 1):
+        epoch_start = time.time()
+
         tr_loss, tr_acc = train_one_epoch(model, train_dl, opt, crit, device)
         va_loss, va_acc = eval_epoch(model, val_dl, crit, device)
+
+        epoch_duration = time.time() - epoch_start
+
+        # Calculate throughput (graphs per second)
+        graphs_per_sec = num_train_graphs / epoch_duration if epoch_duration > 0 else 0
+
+        # GPU memory tracking
+        gpu_mem_allocated = 0
+        if torch.cuda.is_available():
+            gpu_mem_allocated = torch.cuda.memory_allocated() / (1024 ** 2)  # MB
+
+        # Calculate efficiency: time per 1% accuracy gain
+        acc_gain = (va_acc - initial_val_acc) * 100  # Convert to percentage
+        elapsed_time = time.time() - training_start_time
+        time_per_1pct_acc = elapsed_time / acc_gain if acc_gain > 0 else 0
 
         log_dict = {
             "epoch": epoch,
             "train/loss": tr_loss, "train/acc": tr_acc,
             "val/loss": va_loss, "val/acc": va_acc,
             "lr": opt.param_groups[0]["lr"],
+            "time/epoch_duration": epoch_duration,
+            "throughput/graphs_per_sec": graphs_per_sec,
+            "memory/gpu_allocated_mb": gpu_mem_allocated,
+            "efficiency/time_per_1pct_acc": time_per_1pct_acc,
         }
         if wandb_cfg['use']:
             wandb.log(log_dict)
 
-        print(f"epoch {epoch:03d} | train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f}")
+        print(f"epoch {epoch:03d} | train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f} | time {epoch_duration:.2f}s")
 
         if va_acc > best_val:
             best_val = va_acc
             best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+            time_to_best = time.time() - training_start_time
             torch.save(
                 {"state_dict": best_state, "config": config},
                 os.path.join(output_cfg['out_dir'], f"best_{output_cfg['run_name']}.pt"),
             )
 
+    # Log total training time
+    total_train_time = time.time() - training_start_time
+
     if best_state:
         model.load_state_dict(best_state)
     te_loss, te_acc = eval_epoch(model.to(device), test_dl, crit, device)
     print(f"TEST loss/acc: {te_loss:.4f}/{te_acc:.4f}")
+    print(f"Total training time: {total_train_time:.2f}s ({total_train_time/60:.2f}min)")
 
     if wandb_cfg['use']:
-        wandb.log({"test/loss": te_loss, "test/acc": te_acc})
+        wandb.log({
+            "test/loss": te_loss,
+            "test/acc": te_acc,
+            "time/total_train_time": total_train_time,
+            "time/time_to_best_val": time_to_best,
+        })
         wandb.finish()
 
 

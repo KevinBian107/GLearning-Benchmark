@@ -1,6 +1,6 @@
 dataset:
   graph_token_root: graph-token
-  task: cycle_check  # cycle_check, shortest_path
+  task: shortest_path  # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
   data_fraction: 0.2 # fraction of data to use (0.0-1.0), same for train/val/test
@@ -13,7 +13,7 @@ model:
   d_ff: 214
   dropout: 0.1
   max_pos: 512
-  num_classes: 2  # 2 for cycle_check, 7 for shortest_path
+  num_classes: 7  # 2 for cycle_check, 7 for shortest_path
 
 train:
   batch_size: 128
@@ -25,7 +25,7 @@ train:
 
 output:
   out_dir: runs_agtt
-  run_name: agtt-cycle-check
+  run_name: agtt-shortest-path
 
 wandb:
   use: true
