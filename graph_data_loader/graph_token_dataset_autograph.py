@@ -54,37 +54,53 @@ def parse_graph_from_text(text: str) -> Tuple[List[int], List[Tuple[int, int]]]:
     return nodes, edges
 
 
-def parse_label_from_text(text: str) -> Optional[int]:
+def parse_label_from_text(text: str, task: str = 'cycle_check') -> Optional[int]:
     """Parse label from tokenized graph text.
 
     Args:
-        text: Tokenized graph string ending with "<p> yes/no <eos>"
+        text: Tokenized graph string ending with "<p> yes/no <eos>" or "<p> lenX <eos>"
+        task: Task name (cycle_check, shortest_path, etc.)
 
     Returns:
-        Binary label (1 for yes, 0 for no) or None if not found
+        Label as integer, or None if not found
     """
     tokens = text.split()
-    # Look for <p> tag followed by yes/no
+    # Look for <p> tag followed by label
     for i, tok in enumerate(tokens):
         if tok == '<p>' and i + 1 < len(tokens):
-            label_tok = tokens[i + 1].lower()
-            if label_tok == 'yes':
-                return 1
-            elif label_tok == 'no':
-                return 0
+            label_tok = tokens[i + 1].upper()  # Handle case-insensitive
+
+            # Handle cycle_check (yes/no)
+            if label_tok in ('YES', 'NO'):
+                return 1 if label_tok == 'YES' else 0
+
+            # Handle shortest_path (len1-len7)
+            if label_tok.startswith('LEN'):
+                try:
+                    distance = int(label_tok[3:])  # 'len3' -> 3
+                    # Convert to 0-indexed for PyTorch (len1->0, len2->1, ..., len7->6)
+                    return distance - 1
+                except ValueError:
+                    pass
+
+            # Handle unreachable (INF) for shortest_path
+            if label_tok in ('INF', 'INFINITY'):
+                return None  # Skip unreachable samples
+
     return None
 
 
-def parse_graph_from_json(record: dict) -> Tuple[List[Tuple[int, int]], int, Optional[int]]:
+def parse_graph_from_json(record: dict, task: str = 'cycle_check') -> Tuple[List[Tuple[int, int]], int, Optional[int]]:
     """Parse graph structure from graph-token JSON record.
 
     Args:
         record: Dictionary with 'text' and optionally 'nodes', 'edges', 'label' keys
+        task: Task name (cycle_check, shortest_path, etc.)
 
     Returns:
         edges: List of (source, target) tuples
         num_nodes: Number of nodes in the graph
-        label: Binary label (1 for yes/cycle, 0 for no)
+        label: Label as integer (task-dependent)
     """
     # Try to get nodes and edges from direct fields first
     nodes = record.get('nodes', [])
@@ -102,7 +118,7 @@ def parse_graph_from_json(record: dict) -> Tuple[List[Tuple[int, int]], int, Opt
         # Try parsing from text
         text = record.get('text', '')
         if text:
-            label = parse_label_from_text(text)
+            label = parse_label_from_text(text, task=task)
 
     # Determine number of nodes
     if nodes:
@@ -229,7 +245,7 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
 
             for record in records:
                 # Parse graph structure from JSON
-                edges, num_nodes, label = parse_graph_from_json(record)
+                edges, num_nodes, label = parse_graph_from_json(record, task=self.task)
 
                 if num_nodes == 0:
                     continue  # Skip empty graphs
