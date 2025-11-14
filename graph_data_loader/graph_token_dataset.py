@@ -31,6 +31,26 @@ def add_query_encoding_to_features(x: torch.Tensor, query_u: int, query_v: int) 
     return torch.cat([x, query_encoding], dim=1)
 
 
+class AddQueryEncoding:
+    """Transform that adds query node encoding to node features for shortest_path task."""
+
+    def __call__(self, data):
+        """
+        Add query encoding to data.x if query nodes are present.
+
+        Args:
+            data: PyG Data object
+
+        Returns:
+            Modified Data object with query encoding added to x
+        """
+        if hasattr(data, 'query_u') and hasattr(data, 'query_v'):
+            query_u = data.query_u.item() if data.query_u.dim() == 0 else data.query_u[0].item()
+            query_v = data.query_v.item() if data.query_v.dim() == 0 else data.query_v[0].item()
+            data.x = add_query_encoding_to_features(data.x, query_u, query_v)
+        return data
+
+
 def parse_graph_from_text(text: str) -> Tuple[List[int], List[Tuple[int, int]]]:
     """Parse nodes and edges from tokenized graph text.
 
@@ -262,20 +282,14 @@ class GraphTokenDataset(InMemoryDataset):
                     edge_index = torch.empty((2, 0), dtype=torch.long)
 
                 # Create node features (constant features for now)
-                # For shortest_path, query encodings will be added by the model
+                # For shortest_path, query encodings will be added by pre_transform
                 x = torch.ones((num_nodes, 1), dtype=torch.float)
 
-                # Create edge attributes (dummy - constant vectors for unweighted graphs)
-                # GINE requires edge features to match node feature dim after encoding
-                # We use 64D to match the gnn.dim_inner from config
-                num_edges = edge_index.size(1)
-                edge_attr = torch.ones((num_edges, 64), dtype=torch.float)
-
                 # Create PyG Data object
+                # Don't create edge_attr for unweighted graphs - let model handle if needed
                 data = Data(
                     x=x,
                     edge_index=edge_index,
-                    edge_attr=edge_attr,
                     y=torch.tensor([label], dtype=torch.long),
                     num_nodes=num_nodes,
                 )

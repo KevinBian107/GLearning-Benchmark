@@ -17,9 +17,9 @@ from .data_loader import (
 def _import_graph_datasets():
     """Lazy import of graph dataset classes that require torch_geometric."""
     try:
-        from .graph_token_dataset import GraphTokenDataset, add_query_encoding_to_features
+        from .graph_token_dataset import GraphTokenDataset, add_query_encoding_to_features, AddQueryEncoding
         from .graph_token_dataset_autograph import GraphTokenDatasetForAutoGraph
-        return GraphTokenDataset, add_query_encoding_to_features, GraphTokenDatasetForAutoGraph
+        return GraphTokenDataset, add_query_encoding_to_features, AddQueryEncoding, GraphTokenDatasetForAutoGraph
     except ImportError as e:
         if "torch_geometric" in str(e):
             raise ImportError(
@@ -30,10 +30,11 @@ def _import_graph_datasets():
 
 # Make them available via lazy import
 def __getattr__(name):
-    if name in ['GraphTokenDataset', 'add_query_encoding_to_features', 'GraphTokenDatasetForAutoGraph']:
-        GraphTokenDataset, add_query_encoding_to_features, GraphTokenDatasetForAutoGraph = _import_graph_datasets()
+    if name in ['GraphTokenDataset', 'add_query_encoding_to_features', 'AddQueryEncoding', 'GraphTokenDatasetForAutoGraph']:
+        GraphTokenDataset, add_query_encoding_to_features, AddQueryEncoding, GraphTokenDatasetForAutoGraph = _import_graph_datasets()
         globals()['GraphTokenDataset'] = GraphTokenDataset
         globals()['add_query_encoding_to_features'] = add_query_encoding_to_features
+        globals()['AddQueryEncoding'] = AddQueryEncoding
         globals()['GraphTokenDatasetForAutoGraph'] = GraphTokenDatasetForAutoGraph
         return globals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -49,5 +50,6 @@ __all__ = [
     'parse_query_nodes_from_text',
     'GraphTokenDataset',
     'add_query_encoding_to_features',
+    'AddQueryEncoding',
     'GraphTokenDatasetForAutoGraph',
 ]

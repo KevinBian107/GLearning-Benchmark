@@ -9,13 +9,15 @@ from torch_geometric.nn import GINConv, global_mean_pool, global_add_pool, globa
 from torch_geometric.loader import DataLoader
 import wandb
 
-from graph_data_loader import GraphTokenDataset
+from graph_data_loader import GraphTokenDataset, AddQueryEncoding
+from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, log_graph_examples, create_graph_visualizations
 
 
 class MPNN(nn.Module):
     """
     Simple Message Passing Neural Network using GIN (Graph Isomorphism Network) layers.
     Supports both cycle_check (binary) and shortest_path (multi-class with query encoding).
+    Note: For shortest_path, query encoding is added by dataset transform, not in forward pass.
     """
     def __init__(
         self,
@@ -31,9 +33,9 @@ class MPNN(nn.Module):
         self.pooling = pooling
         self.task = task
 
-        # For shortest_path, input features include 2 extra dimensions for query encoding
-        actual_in_dim = in_dim + 2 if task == 'shortest_path' else in_dim
-        self.node_encoder = nn.Linear(actual_in_dim, hidden_dim)
+        # in_dim should already include query encoding if task is shortest_path
+        # (added by dataset transform)
+        self.node_encoder = nn.Linear(in_dim, hidden_dim)
 
         # GIN convolution layers with MLP
         self.convs = nn.ModuleList()
@@ -57,13 +59,7 @@ class MPNN(nn.Module):
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
 
-        # Add query encoding for shortest_path task
-        if self.task == 'shortest_path' and hasattr(data, 'query_u') and hasattr(data, 'query_v'):
-            # Import here to avoid circular dependency
-            from graph_data_loader import add_query_encoding_to_features
-            # Add binary positional encoding for query nodes
-            x = add_query_encoding_to_features(x, data.query_u[0].item(), data.query_v[0].item())
-
+        # Query encoding is already in data.x from dataset transform (for shortest_path)
         # encode node features
         x = self.node_encoder(x)
 
@@ -84,43 +80,43 @@ class MPNN(nn.Module):
         return self.classifier(x)
 
 
-def accuracy(logits: torch.Tensor, y: torch.Tensor) -> float:
-    return (logits.argmax(-1) == y).float().mean().item()
-
-
-def train_one_epoch(model, dl, opt, crit, device):
+def train_one_epoch(model, dl, opt, crit, device, task='cycle_check'):
     model.train()
-    total_loss, total_acc, n = 0.0, 0.0, 0
+    all_metrics = []
     for batch in dl:
         batch = batch.to(device)
         opt.zero_grad(set_to_none=True)
         logits = model(batch)
-        loss = crit(logits, batch.y.squeeze())
+        labels = batch.y.squeeze()
+        loss = crit(logits, labels)
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
 
-        bs = batch.num_graphs
-        total_loss += loss.item() * bs
-        total_acc += accuracy(logits, batch.y.squeeze()) * bs
-        n += bs
-    return total_loss / max(1, n), total_acc / max(1, n)
+        # Compute comprehensive metrics
+        batch_metrics = compute_metrics(logits, labels, task=task, loss_val=loss.item())
+        all_metrics.append(batch_metrics)
+
+    # Aggregate metrics across batches
+    return aggregate_metrics(all_metrics)
 
 
 @torch.no_grad()
-def eval_epoch(model, dl, crit, device):
+def eval_epoch(model, dl, crit, device, task='cycle_check'):
     model.eval()
-    total_loss, total_acc, n = 0.0, 0.0, 0
+    all_metrics = []
     for batch in dl:
         batch = batch.to(device)
         logits = model(batch)
-        loss = crit(logits, batch.y.squeeze())
+        labels = batch.y.squeeze()
+        loss = crit(logits, labels)
 
-        bs = batch.num_graphs
-        total_loss += loss.item() * bs
-        total_acc += accuracy(logits, batch.y.squeeze()) * bs
-        n += bs
-    return total_loss / max(1, n), total_acc / max(1, n)
+        # Compute comprehensive metrics
+        batch_metrics = compute_metrics(logits, labels, task=task, loss_val=loss.item())
+        all_metrics.append(batch_metrics)
+
+    # Aggregate metrics across batches
+    return aggregate_metrics(all_metrics)
 
 
 def load_config(config_path):
@@ -143,6 +139,9 @@ def main(config):
     data_fraction = dataset_cfg.get('data_fraction', 1.0)
     seed = train_cfg['seed']
 
+    # Create transform for shortest_path task (adds query encoding to features)
+    pre_transform = AddQueryEncoding() if dataset_cfg['task'] == 'shortest_path' else None
+
     train_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
@@ -151,6 +150,7 @@ def main(config):
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
         data_fraction=data_fraction,
         seed=seed,
+        pre_transform=pre_transform,
     )
     val_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
@@ -160,6 +160,7 @@ def main(config):
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
         data_fraction=data_fraction,
         seed=seed,
+        pre_transform=pre_transform,
     )
     test_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
@@ -169,6 +170,7 @@ def main(config):
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
         data_fraction=data_fraction,
         seed=seed,
+        pre_transform=pre_transform,
     )
 
     print(f"#train: {len(train_dataset)} | #val: {len(val_dataset)} | #test: {len(test_dataset)}")
@@ -177,10 +179,13 @@ def main(config):
     if len(test_dataset) == 0:
         print(f"[warn] No test files found. Test metrics will be trivial.")
 
-    # sample graph
-    if len(train_dataset) > 0:
-        sample = train_dataset[0]
-        print(f"[train] sample: {sample.num_nodes} nodes, {sample.edge_index.size(1)} edges, label={sample.y.item()}")
+    # Log example graphs (text)
+    print(log_graph_examples(train_dataset, task=dataset_cfg['task'], num_examples=2))
+
+    # Create and save graph visualizations
+    print("\nCreating graph visualizations...")
+    graph_images = create_graph_visualizations(train_dataset, task=dataset_cfg['task'], num_examples=3)
+    print(f"Created {len(graph_images)} graph visualizations")
 
     # data loaders
     train_dl = DataLoader(train_dataset, batch_size=train_cfg['batch_size'], shuffle=True, num_workers=train_cfg['num_workers'])
@@ -189,14 +194,18 @@ def main(config):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Determine number of classes based on task
+    # Determine number of classes and input dimension based on task
+    # Note: For shortest_path, query encoding is already added by pre_transform
     if dataset_cfg['task'] == 'shortest_path':
         num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
+        # Query encoding already added by transform, so use actual feature dim
+        in_dim = train_dataset[0].x.size(1)
     else:  # cycle_check or other binary tasks
         num_classes = model_cfg.get('num_classes', 2)
+        in_dim = model_cfg['in_dim']
 
     model = MPNN(
-        in_dim=model_cfg['in_dim'],
+        in_dim=in_dim,
         hidden_dim=model_cfg['hidden_dim'],
         num_layers=model_cfg['num_layers'],
         dropout=model_cfg['dropout'],
@@ -206,7 +215,9 @@ def main(config):
     ).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'], weight_decay=train_cfg['weight_decay'])
-    crit = nn.CrossEntropyLoss()
+
+    # Select loss function based on task
+    crit = get_loss_function(dataset_cfg['task'], device)
 
     # Count model parameters
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -217,6 +228,11 @@ def main(config):
         wandb.init(project=wandb_cfg['project'], name=output_cfg['run_name'], config=config)
         wandb.watch(model, log="all", log_freq=100)
         wandb.log({"model/num_parameters": num_params})
+
+        # Log graph visualizations to W&B
+        print("Logging graph visualizations to W&B...")
+        wandb_images = [wandb.Image(img, caption=f"Example Graph {i+1}") for i, img in enumerate(graph_images)]
+        wandb.log({"examples/train_graphs": wandb_images})
 
     os.makedirs(output_cfg['out_dir'], exist_ok=True)
     best_val, best_state = -1.0, None
@@ -230,10 +246,14 @@ def main(config):
     for epoch in range(1, train_cfg['epochs'] + 1):
         epoch_start = time.time()
 
-        tr_loss, tr_acc = train_one_epoch(model, train_dl, opt, crit, device)
-        va_loss, va_acc = eval_epoch(model, val_dl, crit, device)
+        train_metrics = train_one_epoch(model, train_dl, opt, crit, device, task=dataset_cfg['task'])
+        val_metrics = eval_epoch(model, val_dl, crit, device, task=dataset_cfg['task'])
 
         epoch_duration = time.time() - epoch_start
+
+        # Extract key metrics
+        tr_loss, tr_acc = train_metrics['loss'], train_metrics['accuracy']
+        va_loss, va_acc = val_metrics['loss'], val_metrics['accuracy']
 
         # Calculate throughput (graphs per second)
         graphs_per_sec = num_train_graphs / epoch_duration if epoch_duration > 0 else 0
@@ -248,20 +268,42 @@ def main(config):
         elapsed_time = time.time() - training_start_time
         time_per_1pct_acc = elapsed_time / acc_gain if acc_gain > 0 else 0
 
+        # Build comprehensive logging dictionary
         log_dict = {
             "epoch": epoch,
-            "train/loss": tr_loss, "train/acc": tr_acc,
-            "val/loss": va_loss, "val/acc": va_acc,
+            "train/loss": tr_loss,
+            "train/acc": tr_acc,
+            "train/precision": train_metrics.get('precision', train_metrics.get('precision_macro', 0)),
+            "train/recall": train_metrics.get('recall', train_metrics.get('recall_macro', 0)),
+            "train/f1": train_metrics.get('f1', train_metrics.get('f1_macro', 0)),
+            "val/loss": va_loss,
+            "val/acc": va_acc,
+            "val/precision": val_metrics.get('precision', val_metrics.get('precision_macro', 0)),
+            "val/recall": val_metrics.get('recall', val_metrics.get('recall_macro', 0)),
+            "val/f1": val_metrics.get('f1', val_metrics.get('f1_macro', 0)),
             "lr": opt.param_groups[0]["lr"],
             "time/epoch_duration": epoch_duration,
             "throughput/graphs_per_sec": graphs_per_sec,
             "memory/gpu_allocated_mb": gpu_mem_allocated,
             "efficiency/time_per_1pct_acc": time_per_1pct_acc,
         }
+
+        # Add MSE/MAE for shortest_path
+        if dataset_cfg['task'] == 'shortest_path':
+            log_dict["train/mse"] = train_metrics.get('mse', 0)
+            log_dict["train/mae"] = train_metrics.get('mae', 0)
+            log_dict["val/mse"] = val_metrics.get('mse', 0)
+            log_dict["val/mae"] = val_metrics.get('mae', 0)
+
         if wandb_cfg['use']:
             wandb.log(log_dict)
 
-        print(f"epoch {epoch:03d} | train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f} | time {epoch_duration:.2f}s")
+        # Print progress
+        if dataset_cfg['task'] == 'shortest_path':
+            print(f"epoch {epoch:03d} | train {tr_loss:.4f}/acc={tr_acc:.4f}/mse={train_metrics.get('mse', 0):.4f} | "
+                  f"val {va_loss:.4f}/acc={va_acc:.4f}/mse={val_metrics.get('mse', 0):.4f} | time {epoch_duration:.2f}s")
+        else:
+            print(f"epoch {epoch:03d} | train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f} | time {epoch_duration:.2f}s")
 
         if va_acc > best_val:
             best_val = va_acc
@@ -277,17 +319,68 @@ def main(config):
 
     if best_state:
         model.load_state_dict(best_state)
-    te_loss, te_acc = eval_epoch(model.to(device), test_dl, crit, device)
-    print(f"TEST loss/acc: {te_loss:.4f}/{te_acc:.4f}")
-    print(f"Total training time: {total_train_time:.2f}s ({total_train_time/60:.2f}min)")
+
+    test_metrics = eval_epoch(model.to(device), test_dl, crit, device, task=dataset_cfg['task'])
+    te_loss, te_acc = test_metrics['loss'], test_metrics['accuracy']
+
+    # Print test results
+    print("\n" + "="*80)
+    print("TEST RESULTS")
+    print("="*80)
+    print(f"Loss: {te_loss:.4f}")
+    print(f"Accuracy: {te_acc:.4f}")
+    print(f"Precision: {test_metrics.get('precision', test_metrics.get('precision_macro', 0)):.4f}")
+    print(f"Recall: {test_metrics.get('recall', test_metrics.get('recall_macro', 0)):.4f}")
+    print(f"F1 Score: {test_metrics.get('f1', test_metrics.get('f1_macro', 0)):.4f}")
+
+    if dataset_cfg['task'] == 'shortest_path':
+        print(f"MSE: {test_metrics.get('mse', 0):.4f}")
+        print(f"MAE: {test_metrics.get('mae', 0):.4f}")
+
+    # Print confusion matrix
+    if 'confusion_matrix' in test_metrics:
+        print("\n" + format_confusion_matrix(test_metrics['confusion_matrix'], task=dataset_cfg['task']))
+
+    print(f"\nTotal training time: {total_train_time:.2f}s ({total_train_time/60:.2f}min)")
+    print(f"Time to best validation: {time_to_best:.2f}s ({time_to_best/60:.2f}min)")
+    print("="*80)
 
     if wandb_cfg['use']:
-        wandb.log({
+        test_log = {
             "test/loss": te_loss,
             "test/acc": te_acc,
+            "test/precision": test_metrics.get('precision', test_metrics.get('precision_macro', 0)),
+            "test/recall": test_metrics.get('recall', test_metrics.get('recall_macro', 0)),
+            "test/f1": test_metrics.get('f1', test_metrics.get('f1_macro', 0)),
             "time/total_train_time": total_train_time,
             "time/time_to_best_val": time_to_best,
-        })
+        }
+        if dataset_cfg['task'] == 'shortest_path':
+            test_log["test/mse"] = test_metrics.get('mse', 0)
+            test_log["test/mae"] = test_metrics.get('mae', 0)
+
+        wandb.log(test_log)
+
+        # Log confusion matrix as table
+        if 'confusion_matrix' in test_metrics:
+            cm = test_metrics['confusion_matrix']
+            if dataset_cfg['task'] == 'cycle_check':
+                labels = ['No', 'Yes']
+            else:
+                labels = [f'len{i+1}' for i in range(7)]
+
+            # Create confusion matrix table for W&B
+            cm_data = []
+            for i, true_label in enumerate(labels):
+                row = [true_label] + cm[i].tolist()
+                cm_data.append(row)
+
+            cm_table = wandb.Table(
+                columns=["True/Pred"] + labels,
+                data=cm_data
+            )
+            wandb.log({"test/confusion_matrix": cm_table})
+
         wandb.finish()
 
 
