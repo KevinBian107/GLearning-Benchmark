@@ -25,8 +25,9 @@ from graphgps.optimizer.extra_optimizers import ExtendedSchedulerConfig
 from torch_geometric.graphgym.optim import create_optimizer, create_scheduler, OptimizerConfig
 
 # graph-token dataset
-from graph_data_loader import GraphTokenDataset, AddQueryEncoding
-from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, log_graph_examples, create_graph_visualizations
+from graph_data_loader import GraphTokenDataset, AddQueryEncoding, get_balanced_indices
+from torch.utils.data import Subset
+from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, log_graph_examples, create_graph_visualizations, create_confusion_matrix_heatmap
 
 
 class GPSWrapper(nn.Module):
@@ -238,6 +239,19 @@ def main(config_dict):
 
     logging.info(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}" +
                  (f" | Test: {len(test_dataset)}" if test_dataset else ""))
+
+    # Apply class balancing if configured
+    balance_enabled = data_cfg.get('balance_classes', False)
+    balance_strategy = data_cfg.get('balance_strategy', 'undersample')
+
+    if balance_enabled:
+        print(f"\n{'='*80}")
+        print("APPLYING CLASS BALANCING")
+        print('='*80)
+        balanced_indices = get_balanced_indices(train_dataset, strategy=balance_strategy, seed=seed)
+        train_dataset = Subset(train_dataset, balanced_indices)
+        print(f"Train dataset size after balancing: {len(train_dataset)}")
+        # Note: We don't balance val/test to maintain original distribution for evaluation
 
     # Log example graphs (text)
     print(log_graph_examples(train_dataset, task=task, num_examples=2))
@@ -501,6 +515,10 @@ def main(config_dict):
                     labels = ['No', 'Yes']
                 else:
                     labels = [f'len{i+1}' for i in range(7)]
+
+                # Create confusion matrix heatmap
+                cm_heatmap = create_confusion_matrix_heatmap(cm, task=task, title="Test Confusion Matrix")
+                wandb.log({"test/confusion_matrix_heatmap": wandb.Image(cm_heatmap, caption="Confusion Matrix")})
 
                 # Create confusion matrix table for W&B
                 cm_data = []

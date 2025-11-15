@@ -178,6 +178,147 @@ def load_examples(path_glob: str, task: str = 'cycle_check', data_fraction: floa
 
     return out
 
+
+def balance_classes(examples: List[Dict[str, Any]], strategy: str = 'undersample', seed: int = 0) -> List[Dict[str, Any]]:
+    """
+    Balance class distribution by undersampling majority classes.
+
+    Args:
+        examples: List of example dicts with 'label' key
+        strategy: Balancing strategy ('undersample' or 'median')
+            - 'undersample': Downsample all classes to match the minority class
+            - 'median': Downsample to median class size (less aggressive)
+        seed: Random seed for reproducible sampling
+
+    Returns:
+        Balanced list of examples
+    """
+    from collections import defaultdict, Counter
+    import random
+
+    # Group examples by label
+    label_to_examples = defaultdict(list)
+    for ex in examples:
+        label = ex.get('label')
+        if label is not None:
+            label_to_examples[label].append(ex)
+
+    if not label_to_examples:
+        return examples
+
+    # Determine target size per class
+    class_sizes = [len(exs) for exs in label_to_examples.values()]
+
+    if strategy == 'undersample':
+        # Match the minority class size
+        target_size = min(class_sizes)
+    elif strategy == 'median':
+        # Use median size (less aggressive)
+        import numpy as np
+        target_size = int(np.median(class_sizes))
+    else:
+        raise ValueError(f"Unknown balancing strategy: {strategy}")
+
+    # Subsample each class
+    rng = random.Random(seed)
+    balanced = []
+
+    print(f"\n⚖️  Class Balancing (strategy={strategy}):")
+    print(f"  Target size per class: {target_size}")
+
+    for label, exs in sorted(label_to_examples.items()):
+        original_count = len(exs)
+        if len(exs) <= target_size:
+            # Keep all examples from minority classes
+            balanced.extend(exs)
+            kept_count = len(exs)
+        else:
+            # Subsample majority classes
+            sampled = rng.sample(exs, target_size)
+            balanced.extend(sampled)
+            kept_count = target_size
+
+        print(f"  Class {label}: {original_count} → {kept_count} ({100*kept_count/original_count:.0f}%)")
+
+    # Shuffle to mix classes
+    rng.shuffle(balanced)
+
+    print(f"  Total: {len(examples)} → {len(balanced)} examples")
+
+    return balanced
+
+
+def get_balanced_indices(dataset, strategy: str = 'undersample', seed: int = 0):
+    """
+    Get balanced indices for a PyG dataset by undersampling majority classes.
+
+    Args:
+        dataset: PyG dataset or list of Data objects
+        strategy: Balancing strategy ('undersample' or 'median')
+        seed: Random seed for reproducible sampling
+
+    Returns:
+        List of indices to keep for balanced dataset
+    """
+    from collections import defaultdict
+    import random
+
+    # Extract labels from dataset
+    labels = []
+    for i in range(len(dataset)):
+        data = dataset[i]
+        label = data.y.item() if hasattr(data, 'y') else None
+        labels.append((i, label))
+
+    # Group indices by label
+    label_to_indices = defaultdict(list)
+    for idx, label in labels:
+        if label is not None:
+            label_to_indices[label].append(idx)
+
+    if not label_to_indices:
+        return list(range(len(dataset)))
+
+    # Determine target size per class
+    class_sizes = [len(indices) for indices in label_to_indices.values()]
+
+    if strategy == 'undersample':
+        target_size = min(class_sizes)
+    elif strategy == 'median':
+        import numpy as np
+        target_size = int(np.median(class_sizes))
+    else:
+        raise ValueError(f"Unknown balancing strategy: {strategy}")
+
+    # Subsample each class
+    rng = random.Random(seed)
+    balanced_indices = []
+
+    print(f"\n⚖️  Class Balancing (strategy={strategy}):")
+    print(f"  Target size per class: {target_size}")
+
+    for label, indices in sorted(label_to_indices.items()):
+        original_count = len(indices)
+        if len(indices) <= target_size:
+            # Keep all examples from minority classes
+            balanced_indices.extend(indices)
+            kept_count = len(indices)
+        else:
+            # Subsample majority classes
+            sampled = rng.sample(indices, target_size)
+            balanced_indices.extend(sampled)
+            kept_count = target_size
+
+        print(f"  Class {label}: {original_count} → {kept_count} ({100*kept_count/original_count:.0f}%)")
+
+    # Shuffle to mix classes
+    rng.shuffle(balanced_indices)
+
+    print(f"  Total: {len(dataset)} → {len(balanced_indices)} examples")
+
+    return balanced_indices
+
+
 def load_examples_connected_nodes(path_glob: str, data_fraction: float = 1.0, seed: int = 0) -> List[Dict[str, Any]]:
     files = sorted(glob(path_glob))
     out: List[Dict[str, Any]] = []

@@ -9,8 +9,9 @@ from torch_geometric.nn import GINConv, global_mean_pool, global_add_pool, globa
 from torch_geometric.loader import DataLoader
 import wandb
 
-from graph_data_loader import GraphTokenDataset, AddQueryEncoding
-from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, log_graph_examples, create_graph_visualizations
+from graph_data_loader import GraphTokenDataset, AddQueryEncoding, get_balanced_indices
+from torch.utils.data import Subset
+from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, log_graph_examples, create_graph_visualizations, create_confusion_matrix_heatmap
 
 
 class MPNN(nn.Module):
@@ -178,6 +179,19 @@ def main(config):
         raise RuntimeError(f"No training examples found. Did you run the task generator?")
     if len(test_dataset) == 0:
         print(f"[warn] No test files found. Test metrics will be trivial.")
+
+    # Apply class balancing if configured
+    balance_enabled = dataset_cfg.get('balance_classes', False)
+    balance_strategy = dataset_cfg.get('balance_strategy', 'undersample')
+
+    if balance_enabled:
+        print(f"\n{'='*80}")
+        print("APPLYING CLASS BALANCING")
+        print('='*80)
+        balanced_indices = get_balanced_indices(train_dataset, strategy=balance_strategy, seed=seed)
+        train_dataset = Subset(train_dataset, balanced_indices)
+        print(f"Train dataset size after balancing: {len(train_dataset)}")
+        # Note: We don't balance val/test to maintain original distribution for evaluation
 
     # Log example graphs (text)
     print(log_graph_examples(train_dataset, task=dataset_cfg['task'], num_examples=2))
@@ -368,6 +382,10 @@ def main(config):
                 labels = ['No', 'Yes']
             else:
                 labels = [f'len{i+1}' for i in range(7)]
+
+            # Create confusion matrix heatmap
+            cm_heatmap = create_confusion_matrix_heatmap(cm, task=dataset_cfg['task'], title="Test Confusion Matrix")
+            wandb.log({"test/confusion_matrix_heatmap": wandb.Image(cm_heatmap, caption="Confusion Matrix")})
 
             # Create confusion matrix table for W&B
             cm_data = []

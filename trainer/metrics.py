@@ -9,6 +9,7 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
 from typing import Dict, Tuple, Optional, List
 import matplotlib.pyplot as plt
+import seaborn as sns
 import networkx as nx
 from io import BytesIO
 from PIL import Image
@@ -318,3 +319,63 @@ def create_graph_visualizations(dataset, task: str, num_examples: int = 3) -> Li
         img = visualize_graph(data, task=task, title=f"Example Graph {i+1}")
         images.append(img)
     return images
+
+
+def create_confusion_matrix_heatmap(cm: np.ndarray, task: str = 'cycle_check', title: str = "Confusion Matrix") -> Image.Image:
+    """
+    Create a confusion matrix heatmap visualization.
+
+    Args:
+        cm: Confusion matrix (num_classes, num_classes)
+        task: 'cycle_check' or 'shortest_path'
+        title: Title for the plot
+
+    Returns:
+        PIL Image object of the heatmap
+    """
+    # Determine class labels
+    if task == 'cycle_check':
+        labels = ['No Cycle', 'Has Cycle']
+    else:  # shortest_path
+        labels = [f'len{i+1}' for i in range(7)]
+
+    # Only use labels that exist in the confusion matrix
+    n_classes = cm.shape[0]
+    labels = labels[:n_classes]
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Create heatmap with seaborn
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt='d',
+        cmap='Blues',
+        xticklabels=labels,
+        yticklabels=labels,
+        cbar_kws={'label': 'Count'},
+        ax=ax,
+        square=True,
+    )
+
+    # Labels and title
+    ax.set_xlabel('Predicted Label', fontsize=12, fontweight='bold')
+    ax.set_ylabel('True Label', fontsize=12, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+
+    # Rotate labels for better readability
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
+
+    plt.tight_layout()
+
+    # Convert to PIL Image
+    buf = BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    img = Image.open(buf).copy()  # Copy to avoid issues when buffer is closed
+    plt.close(fig)
+    buf.close()
+
+    return img

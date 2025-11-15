@@ -19,8 +19,9 @@ autograph_root = os.path.join(parent_dir, 'AutoGraph')
 sys.path.insert(0, autograph_root)
 
 from autograph.datamodules.data.tokenizer import Graph2TrailTokenizer
-from graph_data_loader import GraphTokenDatasetForAutoGraph
-from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function
+from graph_data_loader import GraphTokenDatasetForAutoGraph, get_balanced_indices
+from torch.utils.data import Subset
+from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, create_confusion_matrix_heatmap
 
 
 class SimpleTransformer(nn.Module):
@@ -210,6 +211,19 @@ def main(config):
 
     if len(train_pyg) == 0:
         raise RuntimeError(f"No training examples found. Did you run the task generator?")
+
+    # Apply class balancing if configured
+    balance_enabled = dataset_cfg.get('balance_classes', False)
+    balance_strategy = dataset_cfg.get('balance_strategy', 'undersample')
+
+    if balance_enabled:
+        print(f"\n{'='*80}")
+        print("APPLYING CLASS BALANCING")
+        print('='*80)
+        balanced_indices = get_balanced_indices(train_pyg, strategy=balance_strategy, seed=seed)
+        train_pyg = Subset(train_pyg, balanced_indices)
+        print(f"Train dataset size after balancing: {len(train_pyg)}")
+        # Note: We don't balance val/test to maintain original distribution for evaluation
 
     # Initialize AutoGraph's tokenizer
     print("\nInitializing AutoGraph tokenizer...")
@@ -420,6 +434,10 @@ def main(config):
                 labels = ['No', 'Yes']
             else:
                 labels = [f'len{i+1}' for i in range(7)]
+
+            # Create confusion matrix heatmap
+            cm_heatmap = create_confusion_matrix_heatmap(cm, task=dataset_cfg['task'], title="Test Confusion Matrix")
+            wandb.log({"test/confusion_matrix_heatmap": wandb.Image(cm_heatmap, caption="Confusion Matrix")})
 
             # Create confusion matrix table for W&B
             cm_data = []

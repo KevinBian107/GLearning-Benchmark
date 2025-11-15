@@ -14,8 +14,9 @@ from graph_data_loader import (
     TokenDataset,
     collate,
     resolve_split_globs,
+    balance_classes,
 )
-from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function
+from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, create_confusion_matrix_heatmap
 
 
 class SimpleTransformer(nn.Module):
@@ -129,7 +130,18 @@ def main(config):
     train_ex = load_examples(train_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
     val_ex = load_examples(val_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
     test_ex = load_examples(test_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
-    
+
+    # Apply class balancing if configured
+    balance_enabled = dataset_cfg.get('balance_classes', False)
+    balance_strategy = dataset_cfg.get('balance_strategy', 'undersample')
+
+    if balance_enabled:
+        print(f"\n{'='*80}")
+        print("APPLYING CLASS BALANCING")
+        print('='*80)
+        train_ex = balance_classes(train_ex, strategy=balance_strategy, seed=seed)
+        # Note: We don't balance val/test to maintain original distribution for evaluation
+
     def show_sample(split_name, examples):
         if not examples:
             print(f"[{split_name}] no examples loaded")
@@ -321,13 +333,17 @@ def main(config):
 
         wandb.log(test_log)
 
-        # Log confusion matrix as table
+        # Log confusion matrix as table and heatmap
         if 'confusion_matrix' in test_metrics:
             cm = test_metrics['confusion_matrix']
             if dataset_cfg['task'] == 'cycle_check':
                 labels = ['No', 'Yes']
             else:
                 labels = [f'len{i+1}' for i in range(7)]
+
+            # Create confusion matrix heatmap
+            cm_heatmap = create_confusion_matrix_heatmap(cm, task=dataset_cfg['task'], title="Test Confusion Matrix")
+            wandb.log({"test/confusion_matrix_heatmap": wandb.Image(cm_heatmap, caption="Confusion Matrix")})
 
             # Create confusion matrix table for W&B
             cm_data = []

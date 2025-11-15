@@ -5,6 +5,9 @@ data:
   use_split_tasks_dirs: true
   data_fraction: 0.1 # fraction of data to use (0.0-1.0), same for train/val/test
 
+  balance_classes: True
+  balance_strategy: median  #undersample (match minority), median (match median class size)
+
 out_dir: runs_gps
 run_name: gps-shortest-path
 seed: 0

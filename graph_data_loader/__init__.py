@@ -11,6 +11,8 @@ from .data_loader import (
     resolve_split_globs,
     parse_distance_label_from_text,
     parse_query_nodes_from_text,
+    balance_classes,
+    get_balanced_indices,
 )
 
 # Lazy imports for torch_geometric dependencies (only needed for graph models)
@@ -48,6 +50,8 @@ __all__ = [
     'resolve_split_globs',
     'parse_distance_label_from_text',
     'parse_query_nodes_from_text',
+    'balance_classes',
+    'get_balanced_indices',
     'GraphTokenDataset',
     'add_query_encoding_to_features',
     'AddQueryEncoding',

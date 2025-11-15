@@ -7,6 +7,9 @@ dataset:
   max_len: 512 # maximum sequence length before truncated (cut graph)
   max_vocab: 1000 # maximum unique tokens include special/node_id/tasks
 
+  balance_classes: True
+  balance_strategy: median  #undersample (match minority), median (match median class size)
+
 model:
   vocab_size: null # set automatically from training data
   d_model: 16
