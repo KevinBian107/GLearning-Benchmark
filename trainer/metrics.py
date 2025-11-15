@@ -175,20 +175,10 @@ def get_loss_function(task: str, device: torch.device):
         # Binary classification: CrossEntropyLoss with 2 classes
         return torch.nn.CrossEntropyLoss()
     else:
-        # shortest_path: MSE loss (treating classes as ordinal)
-        def mse_loss(logits, targets):
-            # Convert class probabilities to expected distance
-            # logits: (batch_size, num_classes)
-            # targets: (batch_size,) with class indices
-            probs = torch.softmax(logits, dim=-1)
-            # Expected value: sum of (class_idx * probability)
-            class_indices = torch.arange(logits.size(1), dtype=torch.float32, device=logits.device)
-            expected_values = (probs * class_indices).sum(dim=-1)
-            # MSE with target class indices
-            targets_float = targets.float()
-            return torch.nn.functional.mse_loss(expected_values, targets_float)
-
-        return mse_loss
+        # shortest_path: Use CrossEntropyLoss for training (stronger gradients)
+        # MSE/MAE are still computed as metrics for evaluation
+        # Treating shortest path as multi-class classification (len1-len7)
+        return torch.nn.CrossEntropyLoss()
 
 
 def log_graph_examples(dataset, task: str, num_examples: int = 2) -> str:

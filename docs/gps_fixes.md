@@ -7,8 +7,6 @@ Two critical bugs were identified and resolved in the GraphGPS training pipeline
 
 ## Issue #1: Query Encoding Batching Problem
 
-### Problem Description
-
 ```bas
 ValueError: Node and edge feature dimensionalities do not match.
 Consider setting the 'edge_dim' attribute of 'GINEConv'

@@ -331,12 +331,8 @@ def main(config_dict):
         )
     )
 
-    # Select loss function based on task
-    if task == 'cycle_check':
-        criterion = nn.BCEWithLogitsLoss()
-    else:
-        # Use MSE loss for shortest_path (ordinal classification)
-        criterion = get_loss_function(task, device)
+    # Select loss function based on task (unified across all models)
+    criterion = get_loss_function(task, device)
 
     use_wandb = wandb_cfg.get('use', False)
     wandb_project = wandb_cfg.get('project', 'graph-token')
