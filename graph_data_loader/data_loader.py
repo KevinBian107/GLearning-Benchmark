@@ -181,13 +181,15 @@ def load_examples(path_glob: str, task: str = 'cycle_check', data_fraction: floa
 
 def balance_classes(examples: List[Dict[str, Any]], strategy: str = 'undersample', seed: int = 0) -> List[Dict[str, Any]]:
     """
-    Balance class distribution by undersampling majority classes.
+    Balance class distribution using various strategies.
 
     Args:
         examples: List of example dicts with 'label' key
-        strategy: Balancing strategy ('undersample' or 'median')
+        strategy: Balancing strategy
             - 'undersample': Downsample all classes to match the minority class
             - 'median': Downsample to median class size (less aggressive)
+            - 'oversample': Upsample minority classes to match the majority class (with replacement)
+            - 'soft_oversample': Balance by downsampling majority and upsampling minority to mean
         seed: Random seed for reproducible sampling
 
     Returns:
@@ -216,10 +218,17 @@ def balance_classes(examples: List[Dict[str, Any]], strategy: str = 'undersample
         # Use median size (less aggressive)
         import numpy as np
         target_size = int(np.median(class_sizes))
+    elif strategy == 'oversample':
+        # Match the majority class size
+        target_size = max(class_sizes)
+    elif strategy == 'soft_oversample':
+        # Use mean as middle ground - downsample majority, upsample minority
+        import numpy as np
+        target_size = int(np.mean(class_sizes))
     else:
-        raise ValueError(f"Unknown balancing strategy: {strategy}")
+        raise ValueError(f"Unknown balancing strategy: {strategy}. Choose from: undersample, median, oversample, soft_oversample")
 
-    # Subsample each class
+    # Balance each class
     rng = random.Random(seed)
     balanced = []
 
@@ -228,17 +237,28 @@ def balance_classes(examples: List[Dict[str, Any]], strategy: str = 'undersample
 
     for label, exs in sorted(label_to_examples.items()):
         original_count = len(exs)
-        if len(exs) <= target_size:
-            # Keep all examples from minority classes
+
+        if len(exs) == target_size:
+            # Already at target size
             balanced.extend(exs)
             kept_count = len(exs)
-        else:
-            # Subsample majority classes
+        elif len(exs) > target_size:
+            # Downsample (for undersample/median strategies)
             sampled = rng.sample(exs, target_size)
             balanced.extend(sampled)
             kept_count = target_size
+        else:
+            # Upsample (for oversample strategy or when class is smaller than target)
+            # Duplicate examples with replacement to reach target size
+            balanced.extend(exs)  # Add all original examples
+            num_to_add = target_size - len(exs)
+            duplicates = rng.choices(exs, k=num_to_add)  # Sample with replacement
+            balanced.extend(duplicates)
+            kept_count = target_size
 
-        print(f"  Class {label}: {original_count} → {kept_count} ({100*kept_count/original_count:.0f}%)")
+        change_pct = 100 * kept_count / original_count if original_count > 0 else 100
+        change_symbol = "↑" if kept_count > original_count else "↓" if kept_count < original_count else "="
+        print(f"  Class {label}: {original_count:4d} → {kept_count:4d} ({change_symbol} {change_pct:.0f}%)")
 
     # Shuffle to mix classes
     rng.shuffle(balanced)
