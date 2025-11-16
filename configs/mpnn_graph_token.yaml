@@ -18,7 +18,7 @@ model:
 
 train:
   batch_size: 128
-  epochs: 100
+  epochs: 300
   lr: 0.001   
   weight_decay: 1.0e-5 
   seed: 0        

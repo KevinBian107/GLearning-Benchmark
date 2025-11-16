@@ -3,9 +3,9 @@ dataset:
   task: shortest_path  # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
-  data_fraction: 0.1 # fraction of data to use (0.0-1.0), same for train/val/test
-  max_len: 512 # maximum sequence length before truncated (cut graph)
-  max_vocab: 1000 # maximum unique tokens include special/node_id/tasks
+  data_fraction: 1.0 # fraction of data to use (0.0-1.0), same for train/val/test
+  max_len: 600 # maximum sequence length before truncated (cut graph)
+  max_vocab: 600 # maximum unique tokens include special/node_id/tasks
 
   balance_classes: True
   balance_strategy: median  #undersample (match minority), median (match median class size)
@@ -13,16 +13,16 @@ dataset:
 model:
   vocab_size: null # set automatically from training data
   d_model: 16
-  nhead: 1
+  nhead: 4
   nlayers: 3
-  d_ff: 214
+  d_ff: 128
   dropout: 0.1
-  max_pos: 512 # maximum positional encoding length
+  max_pos: 600 # maximum positional encoding length
   num_classes: 7 # 7 for shortest_path (len1-len7), 2 for cycle_check
 
 train:
   batch_size: 128
-  epochs: 100
+  epochs: 300
   lr: 0.001  
   weight_decay: 1.0e-4 
   seed: 0   

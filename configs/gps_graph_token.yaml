@@ -3,7 +3,7 @@ data:
   task: shortest_path # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
-  data_fraction: 0.1 # fraction of data to use (0.0-1.0), same for train/val/test
+  data_fraction: 1.0 # fraction of data to use (0.0-1.0), same for train/val/test
 
   balance_classes: True
   balance_strategy: median  #undersample (match minority), median (match median class size)
@@ -64,6 +64,6 @@ optim:
   optimizer: adamW
   weight_decay: 1e-5
   base_lr: 0.001
-  max_epoch: 200
+  max_epoch: 300
   scheduler: cosine_with_warmup
   num_warmup_epochs: 5

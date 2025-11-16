@@ -144,14 +144,30 @@ def analyze_split(split_name, files, max_files=None):
             avg_degrees = [2 * e / n if n > 0 else 0 for e, n in zip(edge_counts, graph_sizes)]
             print(f"  Average degree: mean={np.mean(avg_degrees):.2f}, median={np.median(avg_degrees):.2f}")
 
+    # Sequence length statistics
+    if texts:
+        seq_lengths = [len(text.split()) for text in texts]
+        print(f"\n📏 SEQUENCE LENGTH")
+        print("-" * 80)
+        print(f"  Token count: min={min(seq_lengths)}, max={max(seq_lengths)}, mean={np.mean(seq_lengths):.1f}, median={np.median(seq_lengths):.0f}")
+
+        # Check if any sequences exceed common max_len values
+        for threshold in [128, 256, 512]:
+            exceeding = sum(1 for l in seq_lengths if l > threshold)
+            if exceeding > 0:
+                pct = 100 * exceeding / len(seq_lengths)
+                print(f"  Sequences > {threshold} tokens: {exceeding} ({pct:.1f}%)")
+
     # Sample examples
     print(f"\n📝 SAMPLE EXAMPLES (first 3)")
     print("-" * 80)
     for i, (text, label, query) in enumerate(zip(texts[:3], labels[:3], query_nodes[:3])):
+        tokens = text.split()
         print(f"\nExample {i+1}:")
         print(f"  Label: len{label+1} (class {label})")
         print(f"  Query: {query}")
-        print(f"  Text (first 120 chars): {text[:120]}...")
+        print(f"  Tokens: {len(tokens)}")
+        print(f"  Text: {text}")
 
     return {
         'num_examples': len(labels),

@@ -30,8 +30,12 @@ class SimpleTransformer(nn.Module):
         p_drop: float = 0.1,
         max_pos: int = 4096,
         num_classes: int = 2,
+        use_query_nodes: bool = True,
     ):
         super().__init__()
+        self.d_model = d_model
+        self.use_query_nodes = use_query_nodes
+
         self.embed = nn.Embedding(vocab_size, d_model)
         self.pos = nn.Embedding(max_pos, d_model)
         enc_layer = nn.TransformerEncoderLayer(
@@ -43,35 +47,94 @@ class SimpleTransformer(nn.Module):
         )
         self.enc = nn.TransformerEncoder(enc_layer, num_layers=nlayers)
         self.norm = nn.LayerNorm(d_model)
-        self.cls = nn.Linear(d_model, num_classes)
+
+        # Classifier takes 3*d_model if using query nodes, else d_model
+        cls_input_dim = 3 * d_model if use_query_nodes else d_model
+        self.cls = nn.Linear(cls_input_dim, num_classes)
 
         nn.init.trunc_normal_(self.embed.weight, std=0.02)
         nn.init.trunc_normal_(self.pos.weight, std=0.02)
         nn.init.trunc_normal_(self.cls.weight, std=0.02)
         nn.init.zeros_(self.cls.bias)
 
-    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
+    def extract_query_nodes(self, x: torch.Tensor, h: torch.Tensor, vocab: dict) -> tuple:
+        """
+        Extract embeddings for query nodes u and v from shortest_path task.
+
+        Args:
+            x: Input token IDs (batch, seq_len)
+            h: Transformer hidden states (batch, seq_len, d_model)
+            vocab: Vocabulary dict to find <q> token
+
+        Returns:
+            (u_emb, v_emb): Query node embeddings (batch, d_model) each
+        """
+        batch_size = x.size(0)
+        device = x.device
+
+        # Initialize with zeros (fallback if we can't find query)
+        u_emb = torch.zeros(batch_size, self.d_model, device=device)
+        v_emb = torch.zeros(batch_size, self.d_model, device=device)
+
+        # Find <q> token ID
+        q_token_id = vocab.get('<q>', -1)
+        if q_token_id == -1:
+            return u_emb, v_emb
+
+        # For each sample in batch, find query nodes
+        for b in range(batch_size):
+            # Find position of <q> token
+            q_positions = (x[b] == q_token_id).nonzero(as_tuple=True)[0]
+
+            if len(q_positions) == 0:
+                continue
+
+            q_pos = q_positions[0].item()
+
+            # Query format: <q> shortest_distance u v <p>
+            # So u is at q_pos + 2, v is at q_pos + 3
+            if q_pos + 3 < x.size(1):
+                # Use embeddings at query positions
+                u_emb[b] = h[b, q_pos + 2]
+                v_emb[b] = h[b, q_pos + 3]
+
+        return u_emb, v_emb
+
+    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor, vocab: dict = None) -> torch.Tensor:
         B, L = x.size()
         pos_ids = torch.arange(L, device=x.device).unsqueeze(0).expand(B, L)
         h = self.embed(x) + self.pos(pos_ids)
         key_pad = ~attn_mask  # True where to mask
         h = self.enc(h, src_key_padding_mask=key_pad)
+
+        # Get <bos> embedding
         BOS_ID = SPECIAL.index("<bos>")
         if (x[:, 0] == BOS_ID).all():
-            pooled = h[:, 0]
+            bos_emb = h[:, 0]
         else:
             lens = attn_mask.sum(-1, keepdim=True).clamp(min=1)
-            pooled = (h * attn_mask.unsqueeze(-1)).sum(1) / lens
-        z = self.norm(pooled)
-        return self.cls(z)
+            bos_emb = (h * attn_mask.unsqueeze(-1)).sum(1) / lens
 
-def train_one_epoch(model, dl, opt, crit, device, task='cycle_check'):
+        # Extract query node embeddings if enabled and vocab provided
+        if self.use_query_nodes and vocab is not None:
+            u_emb, v_emb = self.extract_query_nodes(x, h, vocab)
+            # Apply LayerNorm to each embedding separately, then concatenate
+            bos_normed = self.norm(bos_emb)
+            u_normed = self.norm(u_emb)
+            v_normed = self.norm(v_emb)
+            pooled = torch.cat([bos_normed, u_normed, v_normed], dim=-1)
+        else:
+            pooled = self.norm(bos_emb)
+
+        return self.cls(pooled)
+
+def train_one_epoch(model, dl, opt, crit, device, vocab=None, task='cycle_check'):
     model.train()
     all_metrics = []
     for X, A, Y in dl:
         X, A, Y = X.to(device), A.to(device), Y.to(device)
         opt.zero_grad(set_to_none=True)
-        logits = model(X, A)
+        logits = model(X, A, vocab=vocab)
         loss = crit(logits, Y)
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -85,12 +148,12 @@ def train_one_epoch(model, dl, opt, crit, device, task='cycle_check'):
     return aggregate_metrics(all_metrics)
 
 @torch.no_grad()
-def eval_epoch(model, dl, crit, device, task='cycle_check'):
+def eval_epoch(model, dl, crit, device, vocab=None, task='cycle_check'):
     model.eval()
     all_metrics = []
     for X, A, Y in dl:
         X, A, Y = X.to(device), A.to(device), Y.to(device)
-        logits = model(X, A)
+        logits = model(X, A, vocab=vocab)
         loss = crit(logits, Y)
 
         # Compute comprehensive metrics
@@ -178,8 +241,10 @@ def main(config):
     # Determine number of classes based on task
     if dataset_cfg['task'] == 'shortest_path':
         num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
+        use_query_nodes = True  # Enable query node embeddings for shortest_path
     else:  # cycle_check or other binary tasks
         num_classes = model_cfg.get('num_classes', 2)
+        use_query_nodes = False  # Not needed for global properties
 
     model = SimpleTransformer(
         vocab_size=len(vocab),
@@ -190,7 +255,13 @@ def main(config):
         p_drop=model_cfg['dropout'],
         max_pos=model_cfg['max_pos'],
         num_classes=num_classes,
+        use_query_nodes=use_query_nodes,
     ).to(device)
+
+    if use_query_nodes:
+        print(f"Using query node embeddings (classifier input: {3 * model_cfg['d_model']})")
+    else:
+        print(f"Using single embedding (classifier input: {model_cfg['d_model']})")
 
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'], weight_decay=train_cfg['weight_decay'])
 
@@ -218,8 +289,8 @@ def main(config):
     for epoch in range(1, train_cfg['epochs'] + 1):
         epoch_start = time.time()
 
-        train_metrics = train_one_epoch(model, train_dl, opt, crit, device, task=dataset_cfg['task'])
-        val_metrics = eval_epoch(model, val_dl, crit, device, task=dataset_cfg['task'])
+        train_metrics = train_one_epoch(model, train_dl, opt, crit, device, vocab=vocab, task=dataset_cfg['task'])
+        val_metrics = eval_epoch(model, val_dl, crit, device, vocab=vocab, task=dataset_cfg['task'])
 
         epoch_duration = time.time() - epoch_start
 
@@ -292,7 +363,7 @@ def main(config):
     if best_state:
         model.load_state_dict(best_state)
 
-    test_metrics = eval_epoch(model.to(device), test_dl, crit, device, task=dataset_cfg['task'])
+    test_metrics = eval_epoch(model.to(device), test_dl, crit, device, vocab=vocab, task=dataset_cfg['task'])
     te_loss, te_acc = test_metrics['loss'], test_metrics['accuracy']
 
     # Print test results

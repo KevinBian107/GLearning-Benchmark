@@ -36,8 +36,12 @@ class SimpleTransformer(nn.Module):
         p_drop: float = 0.1,
         max_pos: int = 4096,
         num_classes: int = 2,
+        use_query_nodes: bool = True,
     ):
         super().__init__()
+        self.d_model = d_model
+        self.use_query_nodes = use_query_nodes
+
         self.embed = nn.Embedding(vocab_size, d_model)
         self.pos = nn.Embedding(max_pos, d_model)
         enc_layer = nn.TransformerEncoderLayer(
@@ -49,24 +53,64 @@ class SimpleTransformer(nn.Module):
         )
         self.enc = nn.TransformerEncoder(enc_layer, num_layers=nlayers)
         self.norm = nn.LayerNorm(d_model)
-        self.cls = nn.Linear(d_model, num_classes)
+
+        # Classifier takes 3*d_model if using query nodes, else d_model
+        cls_input_dim = 3 * d_model if use_query_nodes else d_model
+        self.cls = nn.Linear(cls_input_dim, num_classes)
 
         nn.init.trunc_normal_(self.embed.weight, std=0.02)
         nn.init.trunc_normal_(self.pos.weight, std=0.02)
         nn.init.trunc_normal_(self.cls.weight, std=0.02)
         nn.init.zeros_(self.cls.bias)
 
-    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
+    def extract_query_nodes_from_pyg(self, data_list, h: torch.Tensor) -> tuple:
+        """
+        Extract query node embeddings for AGTT (from PyG data objects).
+
+        Note: AutoGraph tokenization loses explicit query structure, so this is a
+        best-effort extraction. For shortest_path, we try to find query nodes.
+
+        Args:
+            data_list: List of PyG Data objects (if available)
+            h: Transformer hidden states (batch, seq_len, d_model)
+
+        Returns:
+            (u_emb, v_emb): Query node embeddings (batch, d_model) each
+        """
+        batch_size = h.size(0)
+        device = h.device
+
+        # For AGTT, we use mean pooling over all positions as fallback
+        # since AutoGraph tokenization doesn't preserve explicit query structure
+        # This is less effective than IBTT, but maintains architectural consistency
+
+        u_emb = h.mean(dim=1)  # Average over sequence
+        v_emb = h.mean(dim=1)  # Use same for v (no explicit query info)
+
+        return u_emb, v_emb
+
+    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor, data_list=None) -> torch.Tensor:
         B, L = x.size()
         pos_ids = torch.arange(L, device=x.device).unsqueeze(0).expand(B, L)
         h = self.embed(x) + self.pos(pos_ids)
         key_pad = ~attn_mask  # True where to mask
         h = self.enc(h, src_key_padding_mask=key_pad)
 
-        # Use first token (SOS) for pooling
-        pooled = h[:, 0]
-        z = self.norm(pooled)
-        return self.cls(z)
+        # Get SOS embedding
+        sos_emb = h[:, 0]
+
+        # Extract query node embeddings if enabled
+        if self.use_query_nodes and data_list is not None:
+            u_emb, v_emb = self.extract_query_nodes_from_pyg(data_list, h)
+            # Apply LayerNorm to each embedding separately, then concatenate
+            sos_normed = self.norm(sos_emb)
+            u_normed = self.norm(u_emb)
+            v_normed = self.norm(v_emb)
+            pooled = torch.cat([sos_normed, u_normed, v_normed], dim=-1)
+        else:
+            pooled = self.norm(sos_emb)
+
+        return self.cls(pooled)
 
 
 class TokenizedGraphDataset(Dataset):
@@ -268,8 +312,10 @@ def main(config):
     # Determine number of classes based on task
     if dataset_cfg['task'] == 'shortest_path':
         num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
+        use_query_nodes = True  # Enable query node embeddings for shortest_path
     else:  # cycle_check or other binary tasks
         num_classes = model_cfg.get('num_classes', 2)
+        use_query_nodes = False  # Not needed for global properties
 
     model = SimpleTransformer(
         vocab_size=vocab_size,
@@ -280,10 +326,16 @@ def main(config):
         p_drop=model_cfg['dropout'],
         max_pos=model_cfg['max_pos'],
         num_classes=num_classes,
+        use_query_nodes=use_query_nodes,
     ).to(device)
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model parameters: {num_params:,}")
+    if use_query_nodes:
+        print(f"Using query node embeddings (classifier input: {3 * model_cfg['d_model']})")
+        print("Note: AGTT uses mean pooling for query nodes (AutoGraph trails don't preserve explicit queries)")
+    else:
+        print(f"Using single embedding (classifier input: {model_cfg['d_model']})")
     print()
 
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'],
