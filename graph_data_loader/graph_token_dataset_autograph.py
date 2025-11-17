@@ -54,6 +54,29 @@ def parse_graph_from_text(text: str) -> Tuple[List[int], List[Tuple[int, int]]]:
     return nodes, edges
 
 
+def parse_query_nodes_from_text(text: str) -> Optional[Tuple[int, int]]:
+    """Parse query nodes from text like '<q> shortest_distance 2 5' -> (2, 5)
+
+    Args:
+        text: Tokenized graph string with query
+
+    Returns:
+        Tuple of (u, v) node IDs, or None if not found
+    """
+    tokens = text.split()
+    for i, tok in enumerate(tokens):
+        if tok == '<q>' and i + 3 < len(tokens):
+            # Format: <q> shortest_distance u v
+            if tokens[i + 1] == 'shortest_distance':
+                try:
+                    u = int(tokens[i + 2])
+                    v = int(tokens[i + 3])
+                    return (u, v)
+                except ValueError:
+                    pass
+    return None
+
+
 def parse_label_from_text(text: str, task: str = 'cycle_check') -> Optional[int]:
     """Parse label from tokenized graph text.
 
@@ -253,6 +276,13 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
                 if label is None:
                     continue  # Skip if no label found
 
+                # Parse query nodes for shortest_path task
+                query_nodes = None
+                if self.task == 'shortest_path':
+                    text = record.get('text', '')
+                    if text:
+                        query_nodes = parse_query_nodes_from_text(text)
+
                 # Create edge_index tensor
                 if len(edges) > 0:
                     edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
@@ -266,6 +296,11 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
                     y=torch.tensor([label], dtype=torch.long),
                     num_nodes=num_nodes,
                 )
+
+                # Add query nodes if available
+                if query_nodes is not None:
+                    data.query_u = query_nodes[0]
+                    data.query_v = query_nodes[1]
 
                 if self.pre_filter is not None and not self.pre_filter(data):
                     continue

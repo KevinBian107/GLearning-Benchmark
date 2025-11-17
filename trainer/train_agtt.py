@@ -63,16 +63,17 @@ class SimpleTransformer(nn.Module):
         nn.init.trunc_normal_(self.cls.weight, std=0.02)
         nn.init.zeros_(self.cls.bias)
 
-    def extract_query_nodes_from_pyg(self, data_list, h: torch.Tensor) -> tuple:
+    def extract_query_nodes_from_pyg(self, data_list, h: torch.Tensor, attn_mask: torch.Tensor) -> tuple:
         """
-        Extract query node embeddings for AGTT (from PyG data objects).
+        Extract query node embeddings for AGTT from appended query tokens.
 
-        Note: AutoGraph tokenization loses explicit query structure, so this is a
-        best-effort extraction. For shortest_path, we try to find query nodes.
+        Query tokens are appended as: [...trail...] <q> u v
+        So u is at position -2 and v is at position -1 (relative to sequence end).
 
         Args:
             data_list: List of PyG Data objects (if available)
             h: Transformer hidden states (batch, seq_len, d_model)
+            attn_mask: Attention mask (batch, seq_len) - True for valid tokens
 
         Returns:
             (u_emb, v_emb): Query node embeddings (batch, d_model) each
@@ -80,12 +81,19 @@ class SimpleTransformer(nn.Module):
         batch_size = h.size(0)
         device = h.device
 
-        # For AGTT, we use mean pooling over all positions as fallback
-        # since AutoGraph tokenization doesn't preserve explicit query structure
-        # This is less effective than IBTT, but maintains architectural consistency
+        # Initialize with zeros (fallback if query tokens not found)
+        u_emb = torch.zeros(batch_size, self.d_model, device=device)
+        v_emb = torch.zeros(batch_size, self.d_model, device=device)
 
-        u_emb = h.mean(dim=1)  # Average over sequence
-        v_emb = h.mean(dim=1)  # Use same for v (no explicit query info)
+        # Extract from appended query tokens: positions -2 (u) and -1 (v)
+        for b in range(batch_size):
+            # Find actual sequence length (excluding padding)
+            valid_len = attn_mask[b].sum().item()
+
+            if valid_len >= 3:  # Need at least <q>, u, v
+                # Extract embeddings at positions -2 and -1
+                u_emb[b] = h[b, valid_len - 2]
+                v_emb[b] = h[b, valid_len - 1]
 
         return u_emb, v_emb
 
@@ -101,7 +109,7 @@ class SimpleTransformer(nn.Module):
 
         # Extract query node embeddings if enabled
         if self.use_query_nodes and data_list is not None:
-            u_emb, v_emb = self.extract_query_nodes_from_pyg(data_list, h)
+            u_emb, v_emb = self.extract_query_nodes_from_pyg(data_list, h, attn_mask)
             # Apply LayerNorm to each embedding separately, then concatenate
             sos_normed = self.norm(sos_emb)
             u_normed = self.norm(u_emb)
@@ -115,9 +123,10 @@ class SimpleTransformer(nn.Module):
 
 class TokenizedGraphDataset(Dataset):
     """Wraps PyG dataset and tokenizes graphs on-the-fly using AutoGraph tokenizer."""
-    def __init__(self, pyg_dataset, tokenizer):
+    def __init__(self, pyg_dataset, tokenizer, task='cycle_check'):
         self.pyg_dataset = pyg_dataset
         self.tokenizer = tokenizer
+        self.task = task
 
     def __len__(self):
         return len(self.pyg_dataset)
@@ -127,15 +136,30 @@ class TokenizedGraphDataset(Dataset):
         # Tokenize the graph using AutoGraph's SENT tokenizer
         # The tokenizer returns a 1D tensor of token IDs
         tokens = self.tokenizer(data)
+
+        # For shortest_path, append query tokens: <q> shortest_distance u v
+        if self.task == 'shortest_path' and hasattr(data, 'query_u') and hasattr(data, 'query_v'):
+            # Special token IDs (after graph tokens)
+            # AutoGraph uses: 0=PAD, 1=SOS, 2=EOS, 3=MASK, 4+=node IDs
+            # We'll append query tokens with special IDs
+            query_token_id = self.tokenizer.idx_offset + data.num_nodes  # <q>
+            u_token_id = self.tokenizer.idx_offset + data.query_u  # node u
+            v_token_id = self.tokenizer.idx_offset + data.query_v  # node v
+
+            # Append query tokens: <q> u v
+            query_tokens = torch.tensor([query_token_id, u_token_id, v_token_id], dtype=torch.long)
+            tokens = torch.cat([tokens, query_tokens])
+
         # Create attention mask (all True for valid tokens)
         attn_mask = torch.ones(tokens.size(0), dtype=torch.bool)
         label = data.y.item()
-        return tokens, attn_mask, label
+        # Return the original PyG data object as well for query node extraction
+        return tokens, attn_mask, label, data
 
 
 def collate_fn(batch):
     """Collate function to batch tokenized graphs."""
-    tokens_list, attn_list, labels = zip(*batch)
+    tokens_list, attn_list, labels, data_list = zip(*batch)
 
     # Find max length
     max_len = max(t.size(0) for t in tokens_list)
@@ -153,16 +177,17 @@ def collate_fn(batch):
 
     labels_tensor = torch.tensor(labels, dtype=torch.long)
 
-    return tokens_padded, attn_padded, labels_tensor
+    # Return data_list for query node extraction
+    return tokens_padded, attn_padded, labels_tensor, list(data_list)
 
 
 def train_one_epoch(model, dl, opt, crit, device, task='cycle_check'):
     model.train()
     all_metrics = []
-    for X, A, Y in dl:
+    for X, A, Y, data_list in dl:
         X, A, Y = X.to(device), A.to(device), Y.to(device)
         opt.zero_grad(set_to_none=True)
-        logits = model(X, A)
+        logits = model(X, A, data_list=data_list)
         loss = crit(logits, Y)
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -180,9 +205,9 @@ def train_one_epoch(model, dl, opt, crit, device, task='cycle_check'):
 def eval_epoch(model, dl, crit, device, task='cycle_check'):
     model.eval()
     all_metrics = []
-    for X, A, Y in dl:
+    for X, A, Y, data_list in dl:
         X, A, Y = X.to(device), A.to(device), Y.to(device)
-        logits = model(X, A)
+        logits = model(X, A, data_list=data_list)
         loss = crit(logits, Y)
 
         # Compute comprehensive metrics
@@ -285,15 +310,15 @@ def main(config):
     print(f"Max nodes: {max_num_nodes}")
 
     # Calculate vocabulary size (AutoGraph's tokenizer vocab)
-    # vocab size = special tokens + dataset tokens + node IDs
-    vocab_size = tokenizer.idx_offset + max_num_nodes
+    # vocab size = special tokens + dataset tokens + node IDs + query token (<q>)
+    vocab_size = tokenizer.idx_offset + max_num_nodes + 1  # +1 for <q> token
     print(f"Vocabulary size: {vocab_size}")
     print()
 
     # Wrap datasets with tokenization
-    train_ds = TokenizedGraphDataset(train_pyg, tokenizer)
-    val_ds = TokenizedGraphDataset(val_pyg, tokenizer)
-    test_ds = TokenizedGraphDataset(test_pyg, tokenizer)
+    train_ds = TokenizedGraphDataset(train_pyg, tokenizer, task=dataset_cfg['task'])
+    val_ds = TokenizedGraphDataset(val_pyg, tokenizer, task=dataset_cfg['task'])
+    test_ds = TokenizedGraphDataset(test_pyg, tokenizer, task=dataset_cfg['task'])
 
     # Create dataloaders
     train_dl = DataLoader(train_ds, batch_size=train_cfg['batch_size'],
@@ -312,7 +337,7 @@ def main(config):
     # Determine number of classes based on task
     if dataset_cfg['task'] == 'shortest_path':
         num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
-        use_query_nodes = True  # Enable query node embeddings for shortest_path
+        use_query_nodes = True  # Enable query node embeddings (appended to trail)
     else:  # cycle_check or other binary tasks
         num_classes = model_cfg.get('num_classes', 2)
         use_query_nodes = False  # Not needed for global properties
@@ -333,7 +358,7 @@ def main(config):
     print(f"Model parameters: {num_params:,}")
     if use_query_nodes:
         print(f"Using query node embeddings (classifier input: {3 * model_cfg['d_model']})")
-        print("Note: AGTT uses mean pooling for query nodes (AutoGraph trails don't preserve explicit queries)")
+        print("Note: AGTT appends query tokens (<q> u v) to trail sequence for extraction")
     else:
         print(f"Using single embedding (classifier input: {model_cfg['d_model']})")
     print()

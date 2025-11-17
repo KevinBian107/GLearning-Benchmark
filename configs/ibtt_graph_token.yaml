@@ -3,11 +3,11 @@ dataset:
   task: shortest_path  # cycle_check, shortest_path
   algorithm: er # er, ba, sbm, ws, grid
   use_split_tasks_dirs: true
-  data_fraction: 0.5 # fraction of data to use (0.0-1.0), same for train/val/test
+  data_fraction: 0.1 # fraction of data to use (0.0-1.0), same for train/val/test
   max_len: 600 # maximum sequence length before truncated (cut graph)
   max_vocab: 600 # maximum unique tokens include special/node_id/tasks
 
-  balance_classes: True
+  balance_classes: False
   balance_strategy: soft_oversample  # undersample (match minority), median (match median class size), oversample (match majority), soft_oversample (both under/over sample to mean class size)
 
 model:
