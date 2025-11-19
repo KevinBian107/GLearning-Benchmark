@@ -66,3 +66,86 @@ Each graph is represented as a **token sequence** capturing its structure and th
 | **Node Degree** | `<bos> 0 1 <e> 1 2 <e> <n> 0 1 2 <q> 0 <p> d2 <eos>` |
 | **Reachability** | `<bos> 0 1 <e> 1 2 <e> <n> 0 1 2 <q> 0 2 <p> yes <eos>` |
 | **Edge Existence** | `<bos> 0 1 <e> 1 2 <e> <n> 0 1 2 <q> 0 3 <p> no <eos>` |
+
+## Our Synthetic Graph Strcuture
+We generate the synthetic graph with the following preference setting for keeping low connectivity and moderate graph size (reducing short path for shortest path task). Replace the original `.sh` script with this:
+
+```sh
+set -e
+set -x
+
+python3 -m venv graphenv
+source graphenv/bin/activate
+
+pip install -r requirements.txt
+
+OUTPUT_PATH="graphs_train"
+echo "The output path is set to: $OUTPUT_PATH"
+
+for algorithm in "er" "ba" "sbm" "sfn" "complete" "star" "path"
+do
+  echo "Generating examples for $algorithm"
+  python3 graph_generator.py \
+      --algorithm="$algorithm" \
+      --number_of_graphs=500 \
+      --split=train \
+      --output_path="$OUTPUT_PATH" \
+      --min_sparsity=0.1 \
+      --max_sparsity=0.2
+done
+```
+
+As well as the task script:
+
+```sh
+set -e
+set -x
+
+python3 -m venv graphenv
+source graphenv/bin/activate
+
+pip install -r requirements.txt
+
+GRAPHS_DIR="graphs_train"
+TASK_DIR="tasks_train"
+TASKS=("shortest_path" "cycle_check")
+
+ALGORITHM="all"
+
+echo "The output path is set to: $TASK_DIR"
+
+for task in "${TASKS[@]}"
+do
+  echo "Generating examples for task $task"
+  python graph_task_generator.py \
+      --task="$task" \
+      --algorithm="$ALGORITHM" \
+      --task_dir="$TASK_DIR" \
+      --graphs_dir="$GRAPHS_DIR" \
+      --split=train \
+      --random_seed=1234
+done
+```
+
+Each graph is randomly assigned "small", "medium", or "large", then a random size is picked from that range, so in `graph_generator_utils.py`, we will use the following:
+
+```python
+_NUMBER_OF_NODES_RANGE = {
+    "small": np.arange(10, 20),
+    "medium": np.arange(20, 40),
+    "large": np.arange(40, 50),
+}
+```
+
+Then run the following for both `train` and `test`:
+
+```bash
+bash graph_generator.sh
+bash task_generator.sh
+```
+
+During shortest path task, the default of the code is to look at every single pairs of node generated, hence for undirected graphs we would generates N * (N-1) / 2 query pairs per graph:
+  - 5 nodes → 10 pairs
+  - 10 nodes → 45 pairs
+  - 15 nodes → 105 pairs
+  - 19 nodes → 171 pairs

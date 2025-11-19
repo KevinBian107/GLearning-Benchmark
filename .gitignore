@@ -1,6 +1,7 @@
 # logging and model
 data/
 out_graph/
+test/output/
 saved_models/
 wandb
 runs_*/
