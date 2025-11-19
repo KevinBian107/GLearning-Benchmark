@@ -37,10 +37,12 @@ class SimpleTransformer(nn.Module):
         max_pos: int = 4096,
         num_classes: int = 2,
         use_query_nodes: bool = True,
+        tokenizer_idx_offset: int = 4,
     ):
         super().__init__()
         self.d_model = d_model
         self.use_query_nodes = use_query_nodes
+        self.tokenizer_idx_offset = tokenizer_idx_offset
 
         self.embed = nn.Embedding(vocab_size, d_model)
         self.pos = nn.Embedding(max_pos, d_model)
@@ -63,37 +65,41 @@ class SimpleTransformer(nn.Module):
         nn.init.trunc_normal_(self.cls.weight, std=0.02)
         nn.init.zeros_(self.cls.bias)
 
-    def extract_query_nodes_from_pyg(self, data_list, h: torch.Tensor, attn_mask: torch.Tensor) -> tuple:
+    def extract_query_nodes(self, x: torch.Tensor, h: torch.Tensor, q_token_id: int) -> tuple:
         """
-        Extract query node embeddings for AGTT from appended query tokens.
+        Extract query node embeddings by finding <q> marker token.
 
         Query tokens are appended as: [...trail...] <q> u v
-        So u is at position -2 and v is at position -1 (relative to sequence end).
+        This method searches for <q> and extracts u and v at fixed offsets.
 
         Args:
-            data_list: List of PyG Data objects (if available)
+            x: Token IDs (batch, seq_len)
             h: Transformer hidden states (batch, seq_len, d_model)
-            attn_mask: Attention mask (batch, seq_len) - True for valid tokens
+            q_token_id: Token ID for <q> marker
 
         Returns:
             (u_emb, v_emb): Query node embeddings (batch, d_model) each
         """
-        batch_size = h.size(0)
-        device = h.device
+        batch_size = x.size(0)
+        device = x.device
 
         # Initialize with zeros (fallback if query tokens not found)
         u_emb = torch.zeros(batch_size, self.d_model, device=device)
         v_emb = torch.zeros(batch_size, self.d_model, device=device)
 
-        # Extract from appended query tokens: positions -2 (u) and -1 (v)
+        # Find <q> marker and extract u, v at offsets +1, +2
         for b in range(batch_size):
-            # Find actual sequence length (excluding padding)
-            valid_len = attn_mask[b].sum().item()
+            # Find <q> token position
+            q_positions = (x[b] == q_token_id).nonzero(as_tuple=True)[0]
 
-            if valid_len >= 3:  # Need at least <q>, u, v
-                # Extract embeddings at positions -2 and -1
-                u_emb[b] = h[b, valid_len - 2]
-                v_emb[b] = h[b, valid_len - 1]
+            if len(q_positions) > 0:
+                q_pos = q_positions[0].item()
+
+                # Extract u and v at fixed offsets from <q>
+                # Format: ... <q> u v
+                if q_pos + 2 < x.size(1):
+                    u_emb[b] = h[b, q_pos + 1]  # Next position after <q>
+                    v_emb[b] = h[b, q_pos + 2]  # Two positions after <q>
 
         return u_emb, v_emb
 
@@ -109,7 +115,12 @@ class SimpleTransformer(nn.Module):
 
         # Extract query node embeddings if enabled
         if self.use_query_nodes and data_list is not None:
-            u_emb, v_emb = self.extract_query_nodes_from_pyg(data_list, h, attn_mask)
+            # Compute <q> token ID from the first data in batch
+            # q_token_id = tokenizer.idx_offset + max_num_nodes
+            # Since all graphs in batch should have same or less nodes, use first data's num_nodes
+            q_token_id = self.tokenizer_idx_offset + data_list[0].num_nodes
+
+            u_emb, v_emb = self.extract_query_nodes(x, h, q_token_id)
             # Apply LayerNorm to each embedding separately, then concatenate
             sos_normed = self.norm(sos_emb)
             u_normed = self.norm(u_emb)
@@ -352,13 +363,14 @@ def main(config):
         max_pos=model_cfg['max_pos'],
         num_classes=num_classes,
         use_query_nodes=use_query_nodes,
+        tokenizer_idx_offset=tokenizer.idx_offset,
     ).to(device)
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model parameters: {num_params:,}")
     if use_query_nodes:
         print(f"Using query node embeddings (classifier input: {3 * model_cfg['d_model']})")
-        print("Note: AGTT appends query tokens (<q> u v) to trail sequence for extraction")
+        print("Query extraction: Search for <q> marker, extract u and v at offsets +1, +2")
     else:
         print(f"Using single embedding (classifier input: {model_cfg['d_model']})")
     print()
