@@ -25,7 +25,7 @@ from graphgps.optimizer.extra_optimizers import ExtendedSchedulerConfig
 from torch_geometric.graphgym.optim import create_optimizer, create_scheduler, OptimizerConfig
 
 # graph-token dataset
-from graph_data_loader import GraphTokenDataset, AddQueryEncoding, get_balanced_indices
+from graph_data_loader import GraphTokenDataset, AddQueryEncoding, determine_num_classes_pyg
 from torch.utils.data import Subset
 from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, log_graph_examples, create_graph_visualizations, create_confusion_matrix_heatmap
 
@@ -186,12 +186,19 @@ def main(config_dict):
     print(f"DEBUG: cfg.gt.layer_type = {cfg.gt.layer_type}")
 
     task = data_cfg.get('task', 'cycle_check')
-    algorithm = data_cfg.get('algorithm', 'er')
+    # Load data from multiple algorithms for train/val, OOD algorithm for test
+    train_algorithms = data_cfg['train_algorithms']
+    test_algorithm = data_cfg['test_algorithm']
     graph_token_root = data_cfg.get('graph_token_root', 'graph-token')
     use_split_tasks_dirs = data_cfg.get('use_split_tasks_dirs', True)
-    data_fraction = data_cfg.get('data_fraction', 1.0)
+    num_graphs = data_cfg.get('num_graphs', None)
+    num_pairs_per_graph = data_cfg.get('num_pairs_per_graph', None)
 
-    logging.info(f"Loading {task} dataset with algorithm {algorithm}")
+    logging.info(f"Loading {task} dataset with multi-algorithm setup")
+    logging.info(f"Train/Val Algorithms: {train_algorithms}")
+    logging.info(f"Test Algorithm (OOD): {test_algorithm}")
+    logging.info(f"Num Graphs per Algorithm: {num_graphs}")
+    logging.info(f"Num Pairs per Graph: {num_pairs_per_graph}")
 
     # Create transform for shortest_path task (adds query encoding to features)
     pre_transform = AddQueryEncoding() if task == 'shortest_path' else None
@@ -199,10 +206,11 @@ def main(config_dict):
     train_dataset = GraphTokenDataset(
         root=graph_token_root,
         task=task,
-        algorithm=algorithm,
+        algorithm=train_algorithms,
         split='train',
         use_split_tasks_dirs=use_split_tasks_dirs,
-        data_fraction=data_fraction,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph,
         seed=seed,
         pre_transform=pre_transform,
     )
@@ -211,10 +219,11 @@ def main(config_dict):
         val_dataset = GraphTokenDataset(
             root=graph_token_root,
             task=task,
-            algorithm=algorithm,
+            algorithm=train_algorithms,
             split='val',
             use_split_tasks_dirs=use_split_tasks_dirs,
-            data_fraction=data_fraction,
+            num_graphs=num_graphs,
+            num_pairs_per_graph=num_pairs_per_graph,
             seed=seed,
             pre_transform=pre_transform,
         )
@@ -226,10 +235,11 @@ def main(config_dict):
         test_dataset = GraphTokenDataset(
             root=graph_token_root,
             task=task,
-            algorithm=algorithm,
+            algorithm=[test_algorithm],
             split='test',
             use_split_tasks_dirs=use_split_tasks_dirs,
-            data_fraction=data_fraction,
+            num_graphs=num_graphs,
+            num_pairs_per_graph=num_pairs_per_graph,
             seed=seed,
             pre_transform=pre_transform,
         )
@@ -240,26 +250,52 @@ def main(config_dict):
     logging.info(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}" +
                  (f" | Test: {len(test_dataset)}" if test_dataset else ""))
 
-    # Apply class balancing if configured
-    balance_enabled = data_cfg.get('balance_classes', False)
-    balance_strategy = data_cfg.get('balance_strategy', 'undersample')
+    # Log example graphs from each algorithm
+    print(f"\n{'='*80}")
+    print(f"EXAMPLE GRAPHS FROM EACH ALGORITHM")
+    print('='*80)
 
-    if balance_enabled:
-        print(f"\n{'='*80}")
-        print("APPLYING CLASS BALANCING")
-        print('='*80)
-        balanced_indices = get_balanced_indices(train_dataset, strategy=balance_strategy, seed=seed)
-        train_dataset = Subset(train_dataset, balanced_indices)
-        print(f"Train dataset size after balancing: {len(train_dataset)}")
-        # Note: We don't balance val/test to maintain original distribution for evaluation
+    graph_images = []
+    for algo in train_algorithms:
+        # Create a small dataset from this algorithm for display
+        algo_dataset = GraphTokenDataset(
+            root=graph_token_root,
+            task=task,
+            algorithm=[algo],
+            split='train',
+            use_split_tasks_dirs=use_split_tasks_dirs,
+            num_graphs=1,
+            num_pairs_per_graph=1,
+            seed=seed,
+            pre_transform=pre_transform,
+        )
+        if len(algo_dataset) > 0:
+            print(f"\n[TRAIN - {algo.upper()}]")
+            print(log_graph_examples(algo_dataset, task=task, num_examples=1))
+            algo_images = create_graph_visualizations(algo_dataset, task=task, num_examples=1)
+            graph_images.extend([(f"TRAIN-{algo.upper()}", img) for img in algo_images])
 
-    # Log example graphs (text)
-    print(log_graph_examples(train_dataset, task=task, num_examples=2))
+    # Show one example from test (OOD) algorithm
+    test_display_dataset = GraphTokenDataset(
+        root=graph_token_root,
+        task=task,
+        algorithm=[test_algorithm],
+        split='test',
+        use_split_tasks_dirs=use_split_tasks_dirs,
+        num_graphs=1,
+        num_pairs_per_graph=1,
+        seed=seed,
+        pre_transform=pre_transform,
+    )
+    if len(test_display_dataset) > 0:
+        print(f"\n[TEST - {test_algorithm.upper()} (OOD)]")
+        print(log_graph_examples(test_display_dataset, task=task, num_examples=1))
+        test_images = create_graph_visualizations(test_display_dataset, task=task, num_examples=1)
+        graph_images.extend([(f"TEST-{test_algorithm.upper()}-OOD", img) for img in test_images])
 
-    # Create and save graph visualizations
-    print("\nCreating graph visualizations...")
-    graph_images = create_graph_visualizations(train_dataset, task=task, num_examples=3)
-    print(f"Created {len(graph_images)} graph visualizations")
+    print('='*80)
+    print(f"\nCreated {len(graph_images)} graph visualizations total")
+    print()
 
     batch_size = config_dict.get('train', {}).get('batch_size', 32)
 
@@ -286,15 +322,21 @@ def main(config_dict):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     auto_select_device()
 
-    # Determine number of classes and input dimension based on task
+    # Auto-determine number of classes from ALL data (train, val, test combined)
+    from torch.utils.data import ConcatDataset
+    datasets_to_check = [train_dataset, val_dataset]
+    if test_dataset is not None:
+        datasets_to_check.append(test_dataset)
+    all_dataset = ConcatDataset(datasets_to_check)
+    num_classes = determine_num_classes_pyg(all_dataset, task=task)
+
+    # Determine input dimension based on task
     # Note: For shortest_path, query encoding is already added by pre_transform
     if task == 'shortest_path':
-        num_classes = 7  # len1 through len7
         dim_out = num_classes
         # Query encoding already added by transform, so just use actual feature dim
         dim_in = train_dataset[0].x.size(1)
     else:  # cycle_check or other binary tasks
-        num_classes = 2
         dim_out = 1  # Binary classification with BCE loss (single sigmoid output)
         dim_in = train_dataset[0].x.size(1) if train_dataset[0].x is not None else 1
 
@@ -363,7 +405,7 @@ def main(config_dict):
 
         # Log graph visualizations to W&B
         print("Logging graph visualizations to W&B...")
-        wandb_images = [wandb.Image(img, caption=f"Example Graph {i+1}") for i, img in enumerate(graph_images)]
+        wandb_images = [wandb.Image(img, caption=algo_name) for algo_name, img in graph_images]
         wandb.log({"examples/train_graphs": wandb_images})
 
     out_dir = config_dict.get('out_dir', 'runs_gps')

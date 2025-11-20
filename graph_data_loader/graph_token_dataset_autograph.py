@@ -169,11 +169,12 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
         self,
         root: str,
         task: str = 'cycle_check',
-        algorithm: str = 'er',
+        algorithm: Optional[List[str]] = None,
         split: str = 'train',
         use_split_tasks_dirs: bool = True,
-        data_fraction: float = 1.0,
         seed: int = 0,
+        num_graphs: Optional[int] = None,
+        num_pairs_per_graph: Optional[int] = None,
         transform=None,
         pre_transform=None,
         pre_filter=None,
@@ -181,19 +182,28 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
         """
         Args:
             root: Root directory (graph-token repo path)
-            task: Task name (cycle_check, connected_nodes, etc.)
-            algorithm: Graph generation algorithm (er, ba, sbm, etc.)
+            task: Task name (cycle_check, shortest_path, etc.)
+            algorithm: Graph generation algorithm(s) - single string or list of strings
             split: Data split (train, val, test)
             use_split_tasks_dirs: Use tasks_train/tasks_test structure
-            data_fraction: Fraction of data to use (0.0-1.0)
             seed: Random seed for reproducible sampling
+            num_graphs: Number of graph files to sample (per algorithm if multiple)
+            num_pairs_per_graph: For shortest_path, number of query pairs to sample per graph
         """
         self.task = task
-        self.algorithm = algorithm
+        # Support both single algorithm (backward compat) and list of algorithms
+        if isinstance(algorithm, str):
+            self.algorithms = [algorithm]
+        elif algorithm is None:
+            self.algorithms = ['er']  # Default
+        else:
+            self.algorithms = algorithm
+        self.algorithm = self.algorithms[0]  # For backward compatibility
         self.split = split
         self.use_split_tasks_dirs = use_split_tasks_dirs
-        self.data_fraction = max(0.0, min(1.0, data_fraction))  # Clamp to [0, 1]
         self.seed = seed
+        self.num_graphs = num_graphs
+        self.num_pairs_per_graph = num_pairs_per_graph
         self._root = root
 
         super().__init__(root, transform, pre_transform, pre_filter)
@@ -223,12 +233,15 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
     @property
     def processed_dir(self) -> str:
         """Directory to save processed data."""
-        base_name = f"autograph_{self.task}_{self.algorithm}_{self.split}"
+        # Create unique cache key based on algorithms and sampling params
+        algo_str = '+'.join(sorted(self.algorithms))
+        base_name = f"autograph_{self.task}_{algo_str}_{self.split}"
         if self.use_split_tasks_dirs:
             base_name += "_split"
-        if self.data_fraction < 1.0:
-            # Include fraction in cache key to avoid conflicts
-            base_name += f"_frac{self.data_fraction:.2f}"
+        if self.num_graphs is not None:
+            base_name += f"_ng{self.num_graphs}"
+        if self.num_pairs_per_graph is not None:
+            base_name += f"_np{self.num_pairs_per_graph}"
         return os.path.join(self._root, 'processed', base_name)
 
     @property
@@ -245,18 +258,52 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
 
     def process(self):
         """Process JSON files into PyG Data objects."""
-        json_pattern = os.path.join(self.raw_dir, '*.json')
-        json_files = sorted(glob(json_pattern))
+        import random
 
-        if len(json_files) == 0:
+        # Collect JSON files from all algorithms
+        all_json_files = []
+        for algo in self.algorithms:
+            # Build path for this algorithm
+            if self.use_split_tasks_dirs:
+                if self.split in ['val', 'test']:
+                    base = os.path.join(self._root, 'tasks_test', self.task, algo)
+                else:
+                    base = os.path.join(self._root, 'tasks_train', self.task, algo)
+            else:
+                base = os.path.join(self._root, 'tasks', self.task, algo)
+
+            split_dir = os.path.join(base, self.split)
+
+            # For validation, check if val exists, otherwise use test
+            if self.split == 'val' and self.use_split_tasks_dirs:
+                json_pattern_check = os.path.join(split_dir, '*.json')
+                if len(glob(json_pattern_check)) == 0:
+                    split_dir = os.path.join(base, 'test')
+
+            json_pattern = os.path.join(split_dir, '*.json')
+            algo_files = sorted(glob(json_pattern))
+
+            # Sample num_graphs from this algorithm if specified
+            if self.num_graphs is not None and len(algo_files) > self.num_graphs:
+                rng = random.Random(self.seed + hash(algo) % 10000)
+                algo_files = rng.sample(algo_files, self.num_graphs)
+                algo_files = sorted(algo_files)
+                print(f"  [{algo}] Sampled {self.num_graphs}/{len(sorted(glob(json_pattern)))} graph files")
+
+            all_json_files.extend(algo_files)
+
+        if len(all_json_files) == 0:
             raise RuntimeError(
-                f"No JSON files found at {json_pattern}. "
+                f"No JSON files found for algorithms {self.algorithms}. "
                 f"Did you run the graph-token task generator?"
             )
 
-        data_list = []
+        print(f"[GraphTokenDatasetForAutoGraph] Processing {len(all_json_files)} graph files from {len(self.algorithms)} algorithm(s)")
 
-        for json_file in json_files:
+        data_list = []
+        rng = random.Random(self.seed)
+
+        for json_file in all_json_files:
             with open(json_file, 'r') as f:
                 content = json.load(f)
 
@@ -266,6 +313,50 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
             else:
                 records = [content]
 
+            # For shortest_path with num_pairs_per_graph, collect all pairs from this graph first
+            if self.task == 'shortest_path' and self.num_pairs_per_graph is not None:
+                graph_pairs = []
+                for record in records:
+                    edges, num_nodes, label = parse_graph_from_json(record, task=self.task)
+                    if num_nodes == 0 or label is None:
+                        continue
+
+                    text = record.get('text', '')
+                    query_nodes = parse_query_nodes_from_text(text) if text else None
+                    if query_nodes is None:
+                        continue
+
+                    graph_pairs.append((edges, num_nodes, label, query_nodes))
+
+                # Sample pairs from this graph
+                if len(graph_pairs) > self.num_pairs_per_graph:
+                    graph_pairs = rng.sample(graph_pairs, self.num_pairs_per_graph)
+
+                # Process sampled pairs
+                for edges, num_nodes, label, query_nodes in graph_pairs:
+                    if len(edges) > 0:
+                        edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+                    else:
+                        edge_index = torch.empty((2, 0), dtype=torch.long)
+
+                    data = Data(
+                        edge_index=edge_index,
+                        y=torch.tensor([label], dtype=torch.long),
+                        num_nodes=num_nodes,
+                        query_u=query_nodes[0],
+                        query_v=query_nodes[1],
+                    )
+
+                    if self.pre_filter is not None and not self.pre_filter(data):
+                        continue
+                    if self.pre_transform is not None:
+                        data = self.pre_transform(data)
+
+                    data_list.append(data)
+
+                continue  # Skip regular processing for this file
+
+            # Regular processing for cycle_check or when num_pairs_per_graph is not set
             for record in records:
                 # Parse graph structure from JSON
                 edges, num_nodes, label = parse_graph_from_json(record, task=self.task)
@@ -310,14 +401,7 @@ class GraphTokenDatasetForAutoGraph(InMemoryDataset):
 
                 data_list.append(data)
 
-        # Apply data fraction sampling if needed
-        if self.data_fraction < 1.0 and len(data_list) > 0:
-            import random
-            rng = random.Random(self.seed)
-            original_size = len(data_list)
-            n_samples = max(1, int(original_size * self.data_fraction))
-            data_list = rng.sample(data_list, n_samples)
-            print(f"[{self.split}] Sampled {n_samples}/{original_size} graphs (fraction={self.data_fraction})")
+        print(f"[GraphTokenDatasetForAutoGraph] Processed {len(data_list)} data samples")
 
         # Save processed data
         data, slices = self.collate(data_list)

@@ -1,6 +1,7 @@
 """Train mini-transformer on tokenized graph"""
 
 import os, argparse, random, time
+import glob
 import yaml
 import torch
 import torch.nn as nn
@@ -9,12 +10,11 @@ import wandb
 
 from graph_data_loader import (
     SPECIAL,
-    load_examples,
+    load_examples_multi_algorithm,
+    determine_num_classes,
     build_vocab_from_texts,
     TokenDataset,
     collate,
-    resolve_split_globs,
-    balance_classes,
 )
 from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, create_confusion_matrix_heatmap
 
@@ -179,44 +179,101 @@ def main(config):
     random.seed(train_cfg['seed'])
     torch.manual_seed(train_cfg['seed'])
 
-    # dataset globs (supports tasks/ or tasks_{train,test}/)
-    train_glob, val_glob, test_glob = resolve_split_globs(
-        root=dataset_cfg['graph_token_root'],
-        task=dataset_cfg['task'],
-        algorithm=dataset_cfg['algorithm'],
-        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-    )
-
-    data_fraction = dataset_cfg.get('data_fraction', 1.0)
+    # Load data from multiple algorithms for train/val, OOD algorithm for test
+    train_algorithms = dataset_cfg['train_algorithms']
+    test_algorithm = dataset_cfg['test_algorithm']
+    num_graphs = dataset_cfg.get('num_graphs', None)
+    num_pairs_per_graph = dataset_cfg.get('num_pairs_per_graph', None)
     seed = train_cfg['seed']
 
-    train_ex = load_examples(train_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
-    val_ex = load_examples(val_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
-    test_ex = load_examples(test_glob, task=dataset_cfg['task'], data_fraction=data_fraction, seed=seed)
+    print(f"\n{'='*80}")
+    print(f"LOADING DATA - Multi-Algorithm Setup")
+    print('='*80)
+    print(f"Train/Val Algorithms: {train_algorithms}")
+    print(f"Test Algorithm (OOD): {test_algorithm}")
+    print(f"Num Graphs per Algorithm: {num_graphs}")
+    print(f"Num Pairs per Graph: {num_pairs_per_graph}")
+    print()
 
-    # Apply class balancing if configured
-    balance_enabled = dataset_cfg.get('balance_classes', False)
-    balance_strategy = dataset_cfg.get('balance_strategy', 'undersample')
+    train_ex = load_examples_multi_algorithm(
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithms=train_algorithms,
+        split='train',
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        seed=seed,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph
+    )
 
-    if balance_enabled:
-        print(f"\n{'='*80}")
-        print("APPLYING CLASS BALANCING")
-        print('='*80)
-        train_ex = balance_classes(train_ex, strategy=balance_strategy, seed=seed)
-        # Note: We don't balance val/test to maintain original distribution for evaluation
+    val_ex = load_examples_multi_algorithm(
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithms=train_algorithms,
+        split='val',
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        seed=seed,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph
+    )
 
-    def show_sample(split_name, examples):
-        if not examples:
-            print(f"[{split_name}] no examples loaded")
-            return
-        ex = random.choice(examples)
-        toks = ex["text"].split()
-        print(f"[{split_name}] sample len={len(toks)}, label={ex.get('label','?')}")
-        print(" ".join(toks[:40]) + (" ..." if len(toks) > 40 else ""))
+    # Test uses OOD algorithm
+    test_ex = load_examples_multi_algorithm(
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithms=[test_algorithm],
+        split='test',
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        seed=seed,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph
+    )
 
-    show_sample("train", train_ex)
-    show_sample("val", val_ex)
-    show_sample("test", test_ex)
+    # Show one example from each training algorithm
+    print(f"\n{'='*80}")
+    print(f"EXAMPLE GRAPHS FROM EACH ALGORITHM")
+    print('='*80)
+
+    for algo in train_algorithms:
+        # Load a small sample from this algorithm to show
+        if dataset_cfg['use_split_tasks_dirs']:
+            base = os.path.join(dataset_cfg['graph_token_root'], 'tasks_train', dataset_cfg['task'], algo)
+        else:
+            base = os.path.join(dataset_cfg['graph_token_root'], 'tasks', dataset_cfg['task'], algo)
+
+        split_dir = os.path.join(base, 'train')
+        path_glob = os.path.join(split_dir, '*.json')
+        files = sorted(glob.glob(path_glob))
+        if files and len(files) > 0:
+            # Load just one file from this algorithm
+            from graph_data_loader import load_examples
+            algo_examples = load_examples(files[0], task=dataset_cfg['task'], num_graphs=1, num_pairs_per_graph=1)
+            if algo_examples:
+                ex = algo_examples[0]
+                toks = ex["text"].split()
+                print(f"\n[TRAIN - {algo.upper()}] len={len(toks)}, label={ex.get('label','?')}")
+                print(" ".join(toks[:40]) + (" ..." if len(toks) > 40 else ""))
+
+    # Show one example from test (OOD) algorithm
+    if dataset_cfg['use_split_tasks_dirs']:
+        base = os.path.join(dataset_cfg['graph_token_root'], 'tasks_test', dataset_cfg['task'], test_algorithm)
+    else:
+        base = os.path.join(dataset_cfg['graph_token_root'], 'tasks', dataset_cfg['task'], test_algorithm)
+
+    split_dir = os.path.join(base, 'test')
+    path_glob = os.path.join(split_dir, '*.json')
+    files = sorted(glob.glob(path_glob))
+    if files and len(files) > 0:
+        from graph_data_loader import load_examples
+        test_examples_display = load_examples(files[0], task=dataset_cfg['task'], num_graphs=1, num_pairs_per_graph=1)
+        if test_examples_display:
+            ex = test_examples_display[0]
+            toks = ex["text"].split()
+            print(f"\n[TEST - {test_algorithm.upper()} (OOD)] len={len(toks)}, label={ex.get('label','?')}")
+            print(" ".join(toks[:40]) + (" ..." if len(toks) > 40 else ""))
+
+    print('='*80)
+    print()
 
     print(f"#train: {len(train_ex)} | #val: {len(val_ex)} | #test: {len(test_ex)}")
     if len(train_ex) == 0:
@@ -238,12 +295,14 @@ def main(config):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Determine number of classes based on task
+    # Auto-determine number of classes from ALL data (train, val, test combined)
+    all_examples = train_ex + val_ex + test_ex
+    num_classes = determine_num_classes(all_examples, task=dataset_cfg['task'])
+
+    # Determine if we should use query node embeddings
     if dataset_cfg['task'] == 'shortest_path':
-        num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
         use_query_nodes = True  # Enable query node embeddings for shortest_path
     else:  # cycle_check or other binary tasks
-        num_classes = model_cfg.get('num_classes', 2)
         use_query_nodes = False  # Not needed for global properties
 
     model = SimpleTransformer(

@@ -210,8 +210,13 @@ def log_graph_examples(dataset, task: str, num_examples: int = 2) -> str:
         else:  # shortest_path
             class_idx = data.y.item()
             if hasattr(data, 'query_u') and hasattr(data, 'query_v'):
-                query_u = data.query_u.item() if data.query_u.dim() == 0 else data.query_u[0].item()
-                query_v = data.query_v.item() if data.query_v.dim() == 0 else data.query_v[0].item()
+                # Handle both tensor and int cases
+                if isinstance(data.query_u, int):
+                    query_u = data.query_u
+                    query_v = data.query_v
+                else:
+                    query_u = data.query_u.item() if data.query_u.dim() == 0 else data.query_u[0].item()
+                    query_v = data.query_v.item() if data.query_v.dim() == 0 else data.query_v[0].item()
                 examples_str += f"  Query: node {query_u} → node {query_v}\n"
             examples_str += f"  Path length: len{class_idx + 1} (class {class_idx})\n"
 

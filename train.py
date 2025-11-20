@@ -78,28 +78,36 @@ Examples:
     if args.model == 'ibtt':
         from trainer import train_ibtt
         config = train_ibtt.load_config(args.config)
-        print(f"Task: {config['dataset']['task']} | Algorithm: {config['dataset']['algorithm']}")
+        print(f"Task: {config['dataset']['task']}")
+        print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
+        print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
         print()
         train_ibtt.main(config)
 
     elif args.model == 'mpnn':
         from trainer import train_mpnn
         config = train_mpnn.load_config(args.config)
-        print(f"Task: {config['dataset']['task']} | Algorithm: {config['dataset']['algorithm']}")
+        print(f"Task: {config['dataset']['task']}")
+        print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
+        print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
         print()
         train_mpnn.main(config)
 
     elif args.model == 'ggps':
         from trainer import train_ggps
         config = train_ggps.load_config(args.config)
-        print(f"Task: {config['data']['task']} | Algorithm: {config['data']['algorithm']}")
+        print(f"Task: {config['data']['task']}")
+        print(f"Train Algorithms: {config['data']['train_algorithms']}")
+        print(f"Test Algorithm (OOD): {config['data']['test_algorithm']}")
         print()
         train_ggps.main(config)
 
     elif args.model == 'agtt':
         from trainer import train_agtt
         config = train_agtt.load_config(args.config)
-        print(f"Task: {config['dataset']['task']} | Algorithm: {config['dataset']['algorithm']}")
+        print(f"Task: {config['dataset']['task']}")
+        print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
+        print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
         print()
         train_agtt.main(config)
 

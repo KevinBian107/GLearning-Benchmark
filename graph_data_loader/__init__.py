@@ -5,10 +5,14 @@ Graph data loading utilities for different model types.
 from .data_loader import (
     SPECIAL,
     load_examples,
+    load_examples_multi_algorithm,
+    determine_num_classes,
+    determine_num_classes_pyg,
     build_vocab_from_texts,
     TokenDataset,
     collate,
     resolve_split_globs,
+    resolve_multi_algorithm_globs,
     parse_distance_label_from_text,
     parse_query_nodes_from_text,
     balance_classes,
@@ -19,7 +23,7 @@ from .data_loader import (
 def _import_graph_datasets():
     """Lazy import of graph dataset classes that require torch_geometric."""
     try:
-        from .graph_token_dataset import GraphTokenDataset, add_query_encoding_to_features, AddQueryEncoding
+        from .graph_token_dataset_nativegraph import GraphTokenDataset, add_query_encoding_to_features, AddQueryEncoding
         from .graph_token_dataset_autograph import GraphTokenDatasetForAutoGraph
         return GraphTokenDataset, add_query_encoding_to_features, AddQueryEncoding, GraphTokenDatasetForAutoGraph
     except ImportError as e:
@@ -44,10 +48,14 @@ def __getattr__(name):
 __all__ = [
     'SPECIAL',
     'load_examples',
+    'load_examples_multi_algorithm',
+    'determine_num_classes',
+    'determine_num_classes_pyg',
     'build_vocab_from_texts',
     'TokenDataset',
     'collate',
     'resolve_split_globs',
+    'resolve_multi_algorithm_globs',
     'parse_distance_label_from_text',
     'parse_query_nodes_from_text',
     'balance_classes',

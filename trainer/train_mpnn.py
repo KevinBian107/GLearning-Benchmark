@@ -9,8 +9,7 @@ from torch_geometric.nn import GINConv, global_mean_pool, global_add_pool, globa
 from torch_geometric.loader import DataLoader
 import wandb
 
-from graph_data_loader import GraphTokenDataset, AddQueryEncoding, get_balanced_indices
-from torch.utils.data import Subset
+from graph_data_loader import GraphTokenDataset, AddQueryEncoding, determine_num_classes_pyg
 from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, log_graph_examples, create_graph_visualizations, create_confusion_matrix_heatmap
 
 
@@ -137,8 +136,21 @@ def main(config):
     random.seed(train_cfg['seed'])
     torch.manual_seed(train_cfg['seed'])
 
-    data_fraction = dataset_cfg.get('data_fraction', 1.0)
+    # Load data from multiple algorithms for train/val, OOD algorithm for test
+    train_algorithms = dataset_cfg['train_algorithms']
+    test_algorithm = dataset_cfg['test_algorithm']
+    num_graphs = dataset_cfg.get('num_graphs', None)
+    num_pairs_per_graph = dataset_cfg.get('num_pairs_per_graph', None)
     seed = train_cfg['seed']
+
+    print(f"\n{'='*80}")
+    print(f"LOADING DATA - Multi-Algorithm Setup")
+    print('='*80)
+    print(f"Train/Val Algorithms: {train_algorithms}")
+    print(f"Test Algorithm (OOD): {test_algorithm}")
+    print(f"Num Graphs per Algorithm: {num_graphs}")
+    print(f"Num Pairs per Graph: {num_pairs_per_graph}")
+    print()
 
     # Create transform for shortest_path task (adds query encoding to features)
     pre_transform = AddQueryEncoding() if dataset_cfg['task'] == 'shortest_path' else None
@@ -146,30 +158,33 @@ def main(config):
     train_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
-        algorithm=dataset_cfg['algorithm'],
+        algorithm=train_algorithms,
         split='train',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        data_fraction=data_fraction,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph,
         seed=seed,
         pre_transform=pre_transform,
     )
     val_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
-        algorithm=dataset_cfg['algorithm'],
+        algorithm=train_algorithms,
         split='val',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        data_fraction=data_fraction,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph,
         seed=seed,
         pre_transform=pre_transform,
     )
     test_dataset = GraphTokenDataset(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
-        algorithm=dataset_cfg['algorithm'],
+        algorithm=[test_algorithm],
         split='test',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        data_fraction=data_fraction,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph,
         seed=seed,
         pre_transform=pre_transform,
     )
@@ -180,26 +195,52 @@ def main(config):
     if len(test_dataset) == 0:
         print(f"[warn] No test files found. Test metrics will be trivial.")
 
-    # Apply class balancing if configured
-    balance_enabled = dataset_cfg.get('balance_classes', False)
-    balance_strategy = dataset_cfg.get('balance_strategy', 'undersample')
+    # Log example graphs from each algorithm
+    print(f"\n{'='*80}")
+    print(f"EXAMPLE GRAPHS FROM EACH ALGORITHM")
+    print('='*80)
 
-    if balance_enabled:
-        print(f"\n{'='*80}")
-        print("APPLYING CLASS BALANCING")
-        print('='*80)
-        balanced_indices = get_balanced_indices(train_dataset, strategy=balance_strategy, seed=seed)
-        train_dataset = Subset(train_dataset, balanced_indices)
-        print(f"Train dataset size after balancing: {len(train_dataset)}")
-        # Note: We don't balance val/test to maintain original distribution for evaluation
+    graph_images = []  # List of (algorithm_name, image) tuples
+    for algo in train_algorithms:
+        # Create a small dataset from this algorithm for display
+        algo_dataset = GraphTokenDataset(
+            root=dataset_cfg['graph_token_root'],
+            task=dataset_cfg['task'],
+            algorithm=[algo],
+            split='train',
+            use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+            num_graphs=1,
+            num_pairs_per_graph=1,
+            seed=seed,
+            pre_transform=pre_transform,
+        )
+        if len(algo_dataset) > 0:
+            print(f"\n[TRAIN - {algo.upper()}]")
+            print(log_graph_examples(algo_dataset, task=dataset_cfg['task'], num_examples=1))
+            algo_images = create_graph_visualizations(algo_dataset, task=dataset_cfg['task'], num_examples=1)
+            graph_images.extend([(f"TRAIN-{algo.upper()}", img) for img in algo_images])
 
-    # Log example graphs (text)
-    print(log_graph_examples(train_dataset, task=dataset_cfg['task'], num_examples=2))
+    # Show one example from test (OOD) algorithm
+    test_display_dataset = GraphTokenDataset(
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithm=[test_algorithm],
+        split='test',
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        num_graphs=1,
+        num_pairs_per_graph=1,
+        seed=seed,
+        pre_transform=pre_transform,
+    )
+    if len(test_display_dataset) > 0:
+        print(f"\n[TEST - {test_algorithm.upper()} (OOD)]")
+        print(log_graph_examples(test_display_dataset, task=dataset_cfg['task'], num_examples=1))
+        test_images = create_graph_visualizations(test_display_dataset, task=dataset_cfg['task'], num_examples=1)
+        graph_images.extend([(f"TEST-{test_algorithm.upper()}-OOD", img) for img in test_images])
 
-    # Create and save graph visualizations
-    print("\nCreating graph visualizations...")
-    graph_images = create_graph_visualizations(train_dataset, task=dataset_cfg['task'], num_examples=3)
-    print(f"Created {len(graph_images)} graph visualizations")
+    print('='*80)
+    print(f"\nCreated {len(graph_images)} graph visualizations total")
+    print()
 
     # data loaders
     train_dl = DataLoader(train_dataset, batch_size=train_cfg['batch_size'], shuffle=True, num_workers=train_cfg['num_workers'])
@@ -208,14 +249,17 @@ def main(config):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Determine number of classes and input dimension based on task
+    # Auto-determine number of classes from ALL data (train, val, test combined)
+    from torch.utils.data import ConcatDataset
+    all_dataset = ConcatDataset([train_dataset, val_dataset, test_dataset])
+    num_classes = determine_num_classes_pyg(all_dataset, task=dataset_cfg['task'])
+
+    # Determine input dimension based on task
     # Note: For shortest_path, query encoding is already added by pre_transform
     if dataset_cfg['task'] == 'shortest_path':
-        num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
         # Query encoding already added by transform, so use actual feature dim
         in_dim = train_dataset[0].x.size(1)
     else:  # cycle_check or other binary tasks
-        num_classes = model_cfg.get('num_classes', 2)
         in_dim = model_cfg['in_dim']
 
     model = MPNN(
@@ -245,7 +289,7 @@ def main(config):
 
         # Log graph visualizations to W&B
         print("Logging graph visualizations to W&B...")
-        wandb_images = [wandb.Image(img, caption=f"Example Graph {i+1}") for i, img in enumerate(graph_images)]
+        wandb_images = [wandb.Image(img, caption=algo_name) for algo_name, img in graph_images]
         wandb.log({"examples/train_graphs": wandb_images})
 
     os.makedirs(output_cfg['out_dir'], exist_ok=True)

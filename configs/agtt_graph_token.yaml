@@ -1,13 +1,12 @@
 dataset:
   graph_token_root: graph-token
   task: shortest_path  # cycle_check, shortest_path
-  algorithm: er # er, ba, sbm, ws, grid
+  train_algorithms: [er, ba, sbm, path]  # List of algorithms for training/validation
+  test_algorithm: sfn  # OOD algorithm for testing
   use_split_tasks_dirs: true
-  data_fraction: 0.1 # fraction of data to use (0.0-1.0), same for train/val/test
+  num_graphs: 100  # Number of graph files to sample per algorithm
+  num_pairs_per_graph: 10  # For shortest_path: number of query pairs to sample per graph (null for cycle_check)
   max_len: 600 # maximum sequence length for AutoGraph tokenization
-
-  balance_classes: False
-  balance_strategy: soft_oversample  # undersample (match minority), median (match median class size), oversample (match majority), soft_oversample (both under/over sample to mean class size)
 
 model:
   d_model: 16
@@ -16,7 +15,6 @@ model:
   d_ff: 128
   dropout: 0.1
   max_pos: 600
-  num_classes: 7  # 2 for cycle_check, 7 for shortest_path
 
 train:
   batch_size: 128

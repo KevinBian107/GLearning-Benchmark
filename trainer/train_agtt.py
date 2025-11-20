@@ -19,7 +19,7 @@ autograph_root = os.path.join(parent_dir, 'AutoGraph')
 sys.path.insert(0, autograph_root)
 
 from autograph.datamodules.data.tokenizer import Graph2TrailTokenizer
-from graph_data_loader import GraphTokenDatasetForAutoGraph, get_balanced_indices
+from graph_data_loader import GraphTokenDatasetForAutoGraph, determine_num_classes_pyg
 from torch.utils.data import Subset
 from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion_matrix, get_loss_function, create_confusion_matrix_heatmap
 
@@ -249,41 +249,56 @@ def main(config):
     print("=" * 80)
     print("Training AGTT: AutoGraph Tokenization + Transformer")
     print("=" * 80)
-    print(f"Task: {dataset_cfg['task']} | Algorithm: {dataset_cfg['algorithm']}")
+    print(f"Task: {dataset_cfg['task']}")
     print()
 
-    # load PyG datasets (graph-native format)
+    # Load PyG datasets (graph-native format) from multiple algorithms
     print("Loading graph-native datasets...")
-    data_fraction = dataset_cfg.get('data_fraction', 1.0)
+    train_algorithms = dataset_cfg['train_algorithms']
+    test_algorithm = dataset_cfg['test_algorithm']
+    num_graphs = dataset_cfg.get('num_graphs', None)
+    num_pairs_per_graph = dataset_cfg.get('num_pairs_per_graph', None)
     seed = train_cfg['seed']
+
+    print(f"\n{'='*80}")
+    print(f"LOADING DATA - Multi-Algorithm Setup")
+    print('='*80)
+    print(f"Train/Val Algorithms: {train_algorithms}")
+    print(f"Test Algorithm (OOD): {test_algorithm}")
+    print(f"Num Graphs per Algorithm: {num_graphs}")
+    print(f"Num Pairs per Graph: {num_pairs_per_graph}")
+    print()
 
     train_pyg = GraphTokenDatasetForAutoGraph(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
-        algorithm=dataset_cfg['algorithm'],
+        algorithm=train_algorithms,
         split='train',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        data_fraction=data_fraction,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph,
         seed=seed,
     )
 
     val_pyg = GraphTokenDatasetForAutoGraph(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
-        algorithm=dataset_cfg['algorithm'],
+        algorithm=train_algorithms,
         split='val',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        data_fraction=data_fraction,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph,
         seed=seed,
     )
 
     test_pyg = GraphTokenDatasetForAutoGraph(
         root=dataset_cfg['graph_token_root'],
         task=dataset_cfg['task'],
-        algorithm=dataset_cfg['algorithm'],
+        algorithm=[test_algorithm],
         split='test',
         use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        data_fraction=data_fraction,
+        num_graphs=num_graphs,
+        num_pairs_per_graph=num_pairs_per_graph,
         seed=seed,
     )
 
@@ -292,18 +307,45 @@ def main(config):
     if len(train_pyg) == 0:
         raise RuntimeError(f"No training examples found. Did you run the task generator?")
 
-    # Apply class balancing if configured
-    balance_enabled = dataset_cfg.get('balance_classes', False)
-    balance_strategy = dataset_cfg.get('balance_strategy', 'undersample')
+    # Log example graphs from each algorithm
+    print(f"\n{'='*80}")
+    print(f"EXAMPLE GRAPHS FROM EACH ALGORITHM")
+    print('='*80)
 
-    if balance_enabled:
-        print(f"\n{'='*80}")
-        print("APPLYING CLASS BALANCING")
-        print('='*80)
-        balanced_indices = get_balanced_indices(train_pyg, strategy=balance_strategy, seed=seed)
-        train_pyg = Subset(train_pyg, balanced_indices)
-        print(f"Train dataset size after balancing: {len(train_pyg)}")
-        # Note: We don't balance val/test to maintain original distribution for evaluation
+    from trainer.metrics import log_graph_examples
+    for algo in train_algorithms:
+        # Create a small dataset from this algorithm for display
+        algo_dataset = GraphTokenDatasetForAutoGraph(
+            root=dataset_cfg['graph_token_root'],
+            task=dataset_cfg['task'],
+            algorithm=[algo],
+            split='train',
+            use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+            num_graphs=1,
+            num_pairs_per_graph=1,
+            seed=seed,
+        )
+        if len(algo_dataset) > 0:
+            print(f"\n[TRAIN - {algo.upper()}]")
+            print(log_graph_examples(algo_dataset, task=dataset_cfg['task'], num_examples=1))
+
+    # Show one example from test (OOD) algorithm
+    test_display_dataset = GraphTokenDatasetForAutoGraph(
+        root=dataset_cfg['graph_token_root'],
+        task=dataset_cfg['task'],
+        algorithm=[test_algorithm],
+        split='test',
+        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+        num_graphs=1,
+        num_pairs_per_graph=1,
+        seed=seed,
+    )
+    if len(test_display_dataset) > 0:
+        print(f"\n[TEST - {test_algorithm.upper()} (OOD)]")
+        print(log_graph_examples(test_display_dataset, task=dataset_cfg['task'], num_examples=1))
+
+    print('='*80)
+    print()
 
     # Initialize AutoGraph's tokenizer
     print("\nInitializing AutoGraph tokenizer...")
@@ -345,12 +387,15 @@ def main(config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Determine number of classes based on task
+    # Auto-determine number of classes from ALL data (train, val, test combined)
+    from torch.utils.data import ConcatDataset
+    all_pyg = ConcatDataset([train_pyg, val_pyg, test_pyg])
+    num_classes = determine_num_classes_pyg(all_pyg, task=dataset_cfg['task'])
+
+    # Determine if we should use query node embeddings
     if dataset_cfg['task'] == 'shortest_path':
-        num_classes = model_cfg.get('num_classes', 7)  # Default 7 for len1-len7
         use_query_nodes = True  # Enable query node embeddings (appended to trail)
     else:  # cycle_check or other binary tasks
-        num_classes = model_cfg.get('num_classes', 2)
         use_query_nodes = False  # Not needed for global properties
 
     model = SimpleTransformer(
