@@ -1,26 +1,11 @@
 # Graph Learning Benchmark
-This is a repository for benchmarking graph learning methods's performance across various different tasks (for HDSI 2026 DSC180 Capstone).
+This is a repository for benchmarking graph learning methods's performance across various different tasks (for UCSD 2026 DSC180 Capstone).
 
 ## Environment
 Refer to [this documentation](/docs/setup.md) for various different environmental setup.
 
 ## Running the Codebase
-
-The [documentation](/docs/) folder contains information about models we are training here. Currently we support four different methods for benchmarking performance:
-
-| Aspect / Component | GraphGPS (`train_ggps.py`) | Index-Based Tokenization + Transformer (`train_ibtt.py`) | Trail-Based Tokenization + Transformer (`train_agtt.py`) | MPNN (`train_mpnn.py`) |
-|------------------|---------------------------|-------------------------------------------------------|--------------------------------------------------------|-----------------------|
-| **Input** | Native graph | Pre-tokenized sequence | Native graph → Trail tokenization | Native graph |
-| **Architecture** | GNN + Transformer hybrid | Pure Transformer encoder | Pure Transformer encoder | Message Passing Neural Network (e.g., GIN) |
-| **Tokenization** | None (direct GNN) | Index-based (graph-token) | Trail-based (AutoGraph SENT) | None (direct GNN) |
-| **Inductive Bias** | Graph topology + global attention | Sequence order via positional encoding | Sequence order + trail structure | Graph topology via message passing |
-| **Attention Scope** | Local (GNN) + Global (self-attn) | Global self-attention | Global self-attention | Local (k-hop neighborhoods) |
-| **Pooling** | Graph pooling (mean/sum) | Sequence pooling (first token or mean) | Sequence pooling (first token) | Graph pooling (mean/sum) |
-| **Complexity** | O(E) + O(N²) | O(N²) | O(N²) | O(E) per layer |
-
-### Configurations
-
-All training scripts use YAML configuration files for reproducibility and ease of use. Each method has a default config file in the `configs/` directory:
+The [documentation](/docs/models.md) folder contains information about models we are training here. All training scripts use YAML configuration files for reproducibility and ease of use. Each method has a default config file in the `configs/` directory:
 
 - **MPNN**: `configs/mpnn_graph_token.yaml`
 - **IBTT (Index-Based Tokenization + Transformer)**: `configs/ibtt_graph_token.yaml`
@@ -37,7 +22,7 @@ Config Structure: Each config file contains sections for:
 ---
 
 ### Index-Based Tokenization Transformer (IBTT)
-First cd into the correct directory for generating synthetic graphs and tokenize them by following certain rule set:
+First cd into the correct directory for generating synthetic graphs and tokenize them by following certain rule set (refer to the [symthetic data documentation](/docs/synthetic_data.md) for our specific graph + task setup):
 
 ```bash
 # auto setup enviornment + make graphs

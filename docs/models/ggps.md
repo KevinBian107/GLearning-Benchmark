@@ -1,5 +1,7 @@
 # Graph GPS
 
+### [Refer to gps embedding method's documentation for querry encoding details](/docs/models/embed_ggps.md)
+
 This experiment uses GraphGPS to test the ability of feeding synthetic native graphs into an modern graph transformer architecture like GraphGPS. It uses PyTorch Geometric's **GraphGym** framework, which implements a **registration pattern** to allow custom models, layers, and datasets to be plugged in without modifying the core framework code.
 
 ## 🔪 Sharp Bits: Registration Pattern

@@ -1,6 +1,16 @@
 # Training & Models
 For each specific models, refer to [this model folder](/docs/models/) for more details. This documentation is an generic overview.
 
+| Aspect / Component | GraphGPS (`train_ggps.py`) | Index-Based Tokenization + Transformer (`train_ibtt.py`) | Trail-Based Tokenization + Transformer (`train_agtt.py`) | MPNN (`train_mpnn.py`) |
+|------------------|---------------------------|-------------------------------------------------------|--------------------------------------------------------|-----------------------|
+| **Input** | Native graph | Pre-tokenized sequence | Native graph → Trail tokenization | Native graph |
+| **Architecture** | GNN + Transformer hybrid | Pure Transformer encoder | Pure Transformer encoder | Message Passing Neural Network (e.g., GIN) |
+| **Tokenization** | None (direct GNN) | Index-based (graph-token) | Trail-based (AutoGraph SENT) | None (direct GNN) |
+| **Inductive Bias** | Graph topology + global attention | Sequence order via positional encoding | Sequence order + trail structure | Graph topology via message passing |
+| **Attention Scope** | Local (GNN) + Global (self-attn) | Global self-attention | Global self-attention | Local (k-hop neighborhoods) |
+| **Pooling** | Graph pooling (mean/sum) | Sequence pooling (first token or mean) | Sequence pooling (first token) | Graph pooling (mean/sum) |
+| **Complexity** | O(E) + O(N²) | O(N²) | O(N²) | O(E) per layer |
+
 We have various different tasks at hand. Though we use the same model architecture, the input and output of these tasks are different (i.e. `cycle_check` is a graph-level binary classification while `shortest_path` is a node-pair-level multi-class classification or regression), hence requiring various different model input/output design. We summarized these particular designs in the following.
 
 `cycle_check` and `shortest_path` differences:

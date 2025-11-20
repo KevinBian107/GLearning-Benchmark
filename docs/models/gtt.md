@@ -1,5 +1,7 @@
 # Graph Tokenized Transformer
 
+### [Refer to gtt embedding method's documentation for querry encoding details](/docs/models/embed_gtt.md)
+
 This experiment explores index-based tokenization of graphs using Ali Parviz’s [graph-token](https://github.com/alip67/graph-token) framework. Each graph is serialized into a sequence of discrete tokens, similar to how sentences are tokenized in NLP. A simple Transformer encoder model is trained to perform reasoning tasks on these sequences, such as detecting whether a graph contains a cycle.
 
 Traditional GNNs reason over graph structure directly (edges/nodes). Here, the graph is flattened into a sequence so a Transformer can learn to infer structural properties from the ordering of tokens — analogous to learning syntax in language modeling. This approach tests how well sequence models like Transformers can generalize to graph reasoning tasks without explicit message-passing.
