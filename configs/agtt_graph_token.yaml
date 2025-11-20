@@ -1,7 +1,7 @@
 dataset:
   graph_token_root: graph-token
   task: shortest_path  # cycle_check, shortest_path
-  train_algorithms: [er, ba, sbm, path]  # List of algorithms for training/validation
+  train_algorithms: [path]  # List of algorithms for training/validation
   test_algorithm: sfn  # OOD algorithm for testing
   use_split_tasks_dirs: true
   num_graphs: 100  # Number of graph files to sample per algorithm
