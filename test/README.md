@@ -1,6 +1,6 @@
 # Test Suite
 
-This directory contains tests to validate data consistency and analyze training performance.
+This directory contains tests to validate data distribution, consistency and analyze training performance.
 
 ## Tests
 
@@ -57,7 +57,33 @@ python test/train_performance_test.py --samples 20
 
 ---
 
-### 3. `data_distribution_test.py` - Data Distribution Test
+### 3. `data_distribution_test.py` - Data Distribution Analysis
+
+**Purpose**: Analyze and visualize the distribution of training data across different graph generation algorithms for both cycle_check and shortest_path tasks.
+
+**What it analyzes:**
+
+For **Cycle Check** task:
+- ✓ Example graph visualizations from each algorithm
+- ✓ Number of cycles distribution (violin plots)
+- ✓ Graph size distributions (nodes and edges)
+- ✓ Label balance (has cycle vs no cycle)
+
+For **Shortest Path** task:
+- ✓ Example graph visualizations from each algorithm
+- ✓ Path length distribution by algorithm (line plots)
+- ✓ **Combined class distribution across all algorithms** (bar chart with counts)
+- ✓ Graph size distributions for unique graphs
+- ✓ Summary statistics (samples, avg path length, min/max, avg nodes/edges)
+
+**Algorithms analyzed:**
+- ER (Erdős-Rényi): Random graphs
+- BA (Barabási-Albert): Scale-free networks
+- SBM (Stochastic Block Model): Community structure
+- SFN (Scale-Free Network): Power-law degree distribution
+- Complete: Fully connected graphs
+- Star: Star topology graphs
+- Path: Path/line graphs
 
 **Usage:**
 ```bash

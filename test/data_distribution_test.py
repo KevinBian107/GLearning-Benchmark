@@ -283,10 +283,20 @@ def analyze_cycle_check(data, algorithms):
     return fig
 
 
-def analyze_shortest_path(data, algorithms):
-    """Create comprehensive analysis plot for shortest_path task."""
-    fig = plt.figure(figsize=(20, 12))
-    gs = fig.add_gridspec(4, len(algorithms), hspace=0.4, wspace=0.3)
+def analyze_shortest_path(data, algorithms, combined_dist_algorithms=None):
+    """Create comprehensive analysis plot for shortest_path task.
+
+    Args:
+        data: Dictionary of data by algorithm
+        algorithms: List of all algorithms to display
+        combined_dist_algorithms: List of algorithms to include in combined distribution.
+                                  If None, uses all algorithms.
+    """
+    if combined_dist_algorithms is None:
+        combined_dist_algorithms = algorithms
+
+    fig = plt.figure(figsize=(20, 15))
+    gs = fig.add_gridspec(5, len(algorithms), hspace=0.4, wspace=0.3)
 
     # Row 0: Example graphs
     print("Creating example graphs...")
@@ -329,9 +339,63 @@ def analyze_shortest_path(data, algorithms):
     ax.legend(loc='best', ncol=len(algorithms))
     ax.grid(True, alpha=0.3)
 
-    # Row 2: Node and edge distributions
-    ax1 = fig.add_subplot(gs[2, :len(algorithms)//2 + len(algorithms)%2])
-    ax2 = fig.add_subplot(gs[2, len(algorithms)//2 + len(algorithms)%2:])
+    # Row 2: Combined class distribution across specified algorithms
+    print("Plotting combined class distribution...")
+    ax = fig.add_subplot(gs[2, :])
+
+    # Collect all path lengths from specified algorithms only
+    all_lengths = []
+    included_algs = []
+    for alg in combined_dist_algorithms:
+        if alg not in data:
+            continue
+        lengths = [d['label'] for d in data[alg] if d['label'] is not None]
+        all_lengths.extend(lengths)
+        included_algs.append(alg.upper())
+
+    if all_lengths:
+        # Count occurrences of each path length
+        length_counts = Counter(all_lengths)
+        sorted_lengths = sorted(length_counts.keys())
+        counts = [length_counts[l] for l in sorted_lengths]
+
+        # Create bar chart
+        bars = ax.bar(sorted_lengths, counts, color='steelblue', alpha=0.7, edgecolor='black', linewidth=1.5)
+
+        # Add count labels on top of bars
+        for bar, count in zip(bars, counts):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{int(count)}',
+                   ha='center', va='bottom', fontweight='bold', fontsize=10)
+
+        ax.set_xlabel('Shortest Path Length (Class)', fontweight='bold', fontsize=12)
+        ax.set_ylabel('Total Count', fontweight='bold', fontsize=12)
+
+        # Build title with list of included algorithms
+        alg_list = ', '.join(included_algs)
+        title = f'Combined Class Distribution\nAlgorithms: [{alg_list}]'
+        ax.set_title(title, fontsize=14, fontweight='bold')
+
+        ax.set_xticks(sorted_lengths)
+        ax.set_xticklabels([f'len{l}' for l in sorted_lengths])
+        ax.grid(True, alpha=0.3, axis='y')
+
+        # Add summary statistics
+        total = sum(counts)
+        min_len = min(sorted_lengths)
+        max_len = max(sorted_lengths)
+        mean_len = np.mean(all_lengths)
+        median_len = np.median(all_lengths)
+
+        stats_text = f'Total samples: {total} | Min: len{min_len} | Max: len{max_len} | Mean: {mean_len:.2f} | Median: {median_len:.1f}'
+        ax.text(0.5, 0.95, stats_text, transform=ax.transAxes,
+               ha='center', va='top', fontsize=11,
+               bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.3))
+
+    # Row 3: Node and edge distributions
+    ax1 = fig.add_subplot(gs[3, :len(algorithms)//2 + len(algorithms)%2])
+    ax2 = fig.add_subplot(gs[3, len(algorithms)//2 + len(algorithms)%2:])
 
     positions = []
     labels = []
@@ -380,8 +444,8 @@ def analyze_shortest_path(data, algorithms):
     ax2.set_title('Distribution of Graph Sizes (Edges)', fontsize=12, fontweight='bold')
     ax2.grid(True, alpha=0.3)
 
-    # Row 3: Statistics summary
-    ax = fig.add_subplot(gs[3, :])
+    # Row 4: Statistics summary
+    ax = fig.add_subplot(gs[4, :])
     ax.axis('off')
 
     # Compute statistics
@@ -429,8 +493,12 @@ def analyze_shortest_path(data, algorithms):
 
 def main():
     """Main analysis function."""
-    # Algorithms to analyze
+    # Algorithms to analyze (all available)
     algorithms = ['er', 'ba', 'sbm', 'sfn', 'complete', 'star', 'path']
+
+    # Algorithms to include in combined class distribution
+    # (typically matches your training configuration)
+    combined_dist_algorithms = ['er', 'ba', 'sbm', 'path']  # Training algorithms
 
     # Output directory
     output_dir = Path('test/output')
@@ -439,6 +507,8 @@ def main():
     print("=" * 80)
     print("Data Distribution Analysis")
     print("=" * 80)
+    print(f"\nAll algorithms: {algorithms}")
+    print(f"Combined distribution algorithms: {combined_dist_algorithms}")
 
     # Analyze cycle_check
     print("\n[1/2] Analyzing cycle_check task...")
@@ -458,7 +528,7 @@ def main():
     sp_data = load_task_data('shortest_path', algorithms)
 
     if sp_data:
-        fig = analyze_shortest_path(sp_data, algorithms)
+        fig = analyze_shortest_path(sp_data, algorithms, combined_dist_algorithms)
         output_path = output_dir / 'shortest_path_distribution.png'
         fig.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"Saved: {output_path}")
