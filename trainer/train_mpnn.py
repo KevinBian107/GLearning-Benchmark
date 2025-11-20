@@ -281,9 +281,13 @@ def main(config):
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model parameters: {num_params:,}")
 
+    # Create run name with training algorithms in parentheses
+    algo_str = '+'.join(train_algorithms)
+    wandb_run_name = f"{output_cfg['run_name']} ({algo_str})"
+
     # Initialize W&B if enabled
     if wandb_cfg['use']:
-        wandb.init(project=wandb_cfg['project'], name=output_cfg['run_name'], config=config)
+        wandb.init(project=wandb_cfg['project'], name=wandb_run_name, config=config)
         wandb.watch(model, log="all", log_freq=100)
         wandb.log({"model/num_parameters": num_params})
 

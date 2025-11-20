@@ -426,8 +426,12 @@ def main(config):
     # Select loss function based on task
     crit = get_loss_function(dataset_cfg['task'], device)
 
+    # Create run name with training algorithms in parentheses
+    algo_str = '+'.join(train_algorithms)
+    wandb_run_name = f"{output_cfg['run_name']} ({algo_str})"
+
     if wandb_cfg['use']:
-        wandb.init(project=wandb_cfg['project'], name=output_cfg['run_name'], config=config)
+        wandb.init(project=wandb_cfg['project'], name=wandb_run_name, config=config)
         wandb.watch(model, log="all", log_freq=100)
         wandb.log({"model/num_parameters": num_params})
 

@@ -394,10 +394,14 @@ def main(config_dict):
     wandb_project = wandb_cfg.get('project', 'graph-token')
     run_name = config_dict.get('run_name', 'gps-cycle-check')
 
+    # Create run name with training algorithms in parentheses
+    algo_str = '+'.join(train_algorithms)
+    wandb_run_name = f"{run_name} ({algo_str})"
+
     if use_wandb:
         wandb.init(
             project=wandb_project,
-            name=run_name,
+            name=wandb_run_name,
             config=config_dict,
         )
         wandb.watch(model, log='all', log_freq=100)
