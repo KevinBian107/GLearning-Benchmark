@@ -10,7 +10,7 @@ dataset:
 model:
   in_dim: 1 # input feature dimension (constant features for synthetic graphs)
   hidden_dim: 64
-  num_layers: 2
+  num_layers: 5
   dropout: 0.1
   pooling: mean # mean, add, or max
 

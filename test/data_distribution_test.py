@@ -498,7 +498,7 @@ def main():
 
     # Algorithms to include in combined class distribution
     # (typically matches your training configuration)
-    combined_dist_algorithms = ['er', 'ba', 'sbm', 'path']  # Training algorithms
+    combined_dist_algorithms = ['sfn']  # Training algorithms
 
     # Output directory
     output_dir = Path('test/output')

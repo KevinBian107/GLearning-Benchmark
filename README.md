@@ -1,6 +1,8 @@
 # Graph Learning Benchmark
 This is a repository for benchmarking graph learning methods's performance across various different tasks (for UCSD 2026 DSC180 Capstone).
 
+- We provide [this WandB report](https://wandb.ai/kaiwenbian107/graph-token/reports/Graph-Learning-Benchmark--VmlldzoxNTEzNTA2Mg) for show casing the latest benchmark results.
+
 ## Environment
 Refer to [this documentation](/docs/setup.md) for various different environmental setup.
 
