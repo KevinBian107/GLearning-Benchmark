@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GINConv, global_mean_pool, global_add_pool, global_max_pool
 from torch_geometric.loader import DataLoader
+from torch_geometric.datasets import ZINC
 import wandb
 
 from graph_data_loader import GraphTokenDataset, AddQueryEncoding, determine_num_classes_pyg
@@ -16,7 +17,7 @@ from trainer.metrics import compute_metrics, aggregate_metrics, format_confusion
 class MPNN(nn.Module):
     """
     Simple Message Passing Neural Network using GIN (Graph Isomorphism Network) layers.
-    Supports both cycle_check (binary) and shortest_path (multi-class with query encoding).
+    Supports cycle_check (binary), shortest_path (multi-class), and zinc (regression).
     Note: For shortest_path, query encoding is added by dataset transform, not in forward pass.
     """
     def __init__(
@@ -53,11 +54,20 @@ class MPNN(nn.Module):
             nn.BatchNorm1d(hidden_dim) for _ in range(num_layers)
         ])
 
-        # Task-aware classifier head
-        self.classifier = nn.Linear(hidden_dim, num_classes)
+        # Task-aware output head
+        if task == 'zinc':
+            # Regression: single output
+            self.output_head = nn.Linear(hidden_dim, 1)
+        else:
+            # Classification: num_classes outputs
+            self.output_head = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
+
+        # Convert to float if needed (ZINC has integer atom features)
+        if x.dtype != torch.float32:
+            x = x.float()
 
         # Query encoding is already in data.x from dataset transform (for shortest_path)
         # encode node features
@@ -77,7 +87,12 @@ class MPNN(nn.Module):
         elif self.pooling == 'max':
             x = global_max_pool(x, batch)
 
-        return self.classifier(x)
+        out = self.output_head(x)
+
+        # For regression, return squeezed output
+        if self.task == 'zinc':
+            return out.squeeze(-1)
+        return out
 
 
 def train_one_epoch(model, dl, opt, crit, device, task='cycle_check'):
@@ -136,111 +151,138 @@ def main(config):
     random.seed(train_cfg['seed'])
     torch.manual_seed(train_cfg['seed'])
 
-    # Load data from multiple algorithms for train/val, OOD algorithm for test
-    train_algorithms = dataset_cfg['train_algorithms']
-    test_algorithm = dataset_cfg['test_algorithm']
-    num_graphs = dataset_cfg.get('num_graphs', None)
-    num_pairs_per_graph = dataset_cfg.get('num_pairs_per_graph', None)
-    seed = train_cfg['seed']
+    task = dataset_cfg['task']
 
-    print(f"\n{'='*80}")
-    print(f"LOADING DATA - Multi-Algorithm Setup")
-    print('='*80)
-    print(f"Train/Val Algorithms: {train_algorithms}")
-    print(f"Test Algorithm (OOD): {test_algorithm}")
-    print(f"Num Graphs per Algorithm: {num_graphs}")
-    print(f"Num Pairs per Graph: {num_pairs_per_graph}")
-    print()
+    # ZINC dataset loading (regression task)
+    if task == 'zinc':
+        print(f"\n{'='*80}")
+        print(f"LOADING DATA - ZINC 12K Regression Dataset")
+        print('='*80)
+        print(f"Task: Graph-level regression (constrained solubility)")
+        print()
 
-    # Create transform for shortest_path task (adds query encoding to features)
-    pre_transform = AddQueryEncoding() if dataset_cfg['task'] == 'shortest_path' else None
+        zinc_root = dataset_cfg.get('zinc_root', './data/ZINC')
+        subset = dataset_cfg.get('subset', True)
 
-    train_dataset = GraphTokenDataset(
-        root=dataset_cfg['graph_token_root'],
-        task=dataset_cfg['task'],
-        algorithm=train_algorithms,
-        split='train',
-        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        num_graphs=num_graphs,
-        num_pairs_per_graph=num_pairs_per_graph,
-        seed=seed,
-        pre_transform=pre_transform,
-    )
-    val_dataset = GraphTokenDataset(
-        root=dataset_cfg['graph_token_root'],
-        task=dataset_cfg['task'],
-        algorithm=train_algorithms,
-        split='val',
-        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        num_graphs=num_graphs,
-        num_pairs_per_graph=num_pairs_per_graph,
-        seed=seed,
-        pre_transform=pre_transform,
-    )
-    test_dataset = GraphTokenDataset(
-        root=dataset_cfg['graph_token_root'],
-        task=dataset_cfg['task'],
-        algorithm=[test_algorithm],
-        split='test',
-        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        num_graphs=num_graphs,
-        num_pairs_per_graph=num_pairs_per_graph,
-        seed=seed,
-        pre_transform=pre_transform,
-    )
+        train_dataset = ZINC(root=zinc_root, subset=subset, split='train')
+        val_dataset = ZINC(root=zinc_root, subset=subset, split='val')
+        test_dataset = ZINC(root=zinc_root, subset=subset, split='test')
 
-    print(f"#train: {len(train_dataset)} | #val: {len(val_dataset)} | #test: {len(test_dataset)}")
-    if len(train_dataset) == 0:
-        raise RuntimeError(f"No training examples found. Did you run the task generator?")
-    if len(test_dataset) == 0:
-        print(f"[warn] No test files found. Test metrics will be trivial.")
+        print(f"#train: {len(train_dataset)} | #val: {len(val_dataset)} | #test: {len(test_dataset)}")
+        print(f"Sample molecule: {train_dataset[0].num_nodes} atoms, {train_dataset[0].num_edges} bonds")
+        print(f"Target (first sample): {train_dataset[0].y.item():.4f}")
+        print()
 
-    # Log example graphs from each algorithm
-    print(f"\n{'='*80}")
-    print(f"EXAMPLE GRAPHS FROM EACH ALGORITHM")
-    print('='*80)
+        graph_images = []  # No algorithm-specific visualization for ZINC
 
-    graph_images = []  # List of (algorithm_name, image) tuples
-    for algo in train_algorithms:
-        # Create a small dataset from this algorithm for display
-        algo_dataset = GraphTokenDataset(
+    # Graph-token datasets (classification tasks)
+    else:
+        # Load data from multiple algorithms for train/val, OOD algorithm for test
+        train_algorithms = dataset_cfg['train_algorithms']
+        test_algorithm = dataset_cfg['test_algorithm']
+        num_graphs = dataset_cfg.get('num_graphs', None)
+        num_pairs_per_graph = dataset_cfg.get('num_pairs_per_graph', None)
+        seed = train_cfg['seed']
+
+        print(f"\n{'='*80}")
+        print(f"LOADING DATA - Multi-Algorithm Setup")
+        print('='*80)
+        print(f"Train/Val Algorithms: {train_algorithms}")
+        print(f"Test Algorithm (OOD): {test_algorithm}")
+        print(f"Num Graphs per Algorithm: {num_graphs}")
+        print(f"Num Pairs per Graph: {num_pairs_per_graph}")
+        print()
+
+        # Create transform for shortest_path task (adds query encoding to features)
+        pre_transform = AddQueryEncoding() if task == 'shortest_path' else None
+
+        train_dataset = GraphTokenDataset(
             root=dataset_cfg['graph_token_root'],
-            task=dataset_cfg['task'],
-            algorithm=[algo],
+            task=task,
+            algorithm=train_algorithms,
             split='train',
+            use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+            num_graphs=num_graphs,
+            num_pairs_per_graph=num_pairs_per_graph,
+            seed=seed,
+            pre_transform=pre_transform,
+        )
+        val_dataset = GraphTokenDataset(
+            root=dataset_cfg['graph_token_root'],
+            task=task,
+            algorithm=train_algorithms,
+            split='val',
+            use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+            num_graphs=num_graphs,
+            num_pairs_per_graph=num_pairs_per_graph,
+            seed=seed,
+            pre_transform=pre_transform,
+        )
+        test_dataset = GraphTokenDataset(
+            root=dataset_cfg['graph_token_root'],
+            task=task,
+            algorithm=[test_algorithm],
+            split='test',
+            use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+            num_graphs=num_graphs,
+            num_pairs_per_graph=num_pairs_per_graph,
+            seed=seed,
+            pre_transform=pre_transform,
+        )
+
+        print(f"#train: {len(train_dataset)} | #val: {len(val_dataset)} | #test: {len(test_dataset)}")
+        if len(train_dataset) == 0:
+            raise RuntimeError(f"No training examples found. Did you run the task generator?")
+        if len(test_dataset) == 0:
+            print(f"[warn] No test files found. Test metrics will be trivial.")
+
+    # Log example graphs from each algorithm (skip for ZINC)
+    if task != 'zinc':
+        print(f"\n{'='*80}")
+        print(f"EXAMPLE GRAPHS FROM EACH ALGORITHM")
+        print('='*80)
+
+        graph_images = []  # List of (algorithm_name, image) tuples
+        for algo in train_algorithms:
+            # Create a small dataset from this algorithm for display
+            algo_dataset = GraphTokenDataset(
+                root=dataset_cfg['graph_token_root'],
+                task=task,
+                algorithm=[algo],
+                split='train',
+                use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
+                num_graphs=1,
+                num_pairs_per_graph=1,
+                seed=seed,
+                pre_transform=pre_transform,
+            )
+            if len(algo_dataset) > 0:
+                print(f"\n[TRAIN - {algo.upper()}]")
+                print(log_graph_examples(algo_dataset, task=task, num_examples=1))
+                algo_images = create_graph_visualizations(algo_dataset, task=task, num_examples=1)
+                graph_images.extend([(f"TRAIN-{algo.upper()}", img) for img in algo_images])
+
+        # Show one example from test (OOD) algorithm
+        test_display_dataset = GraphTokenDataset(
+            root=dataset_cfg['graph_token_root'],
+            task=task,
+            algorithm=[test_algorithm],
+            split='test',
             use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
             num_graphs=1,
             num_pairs_per_graph=1,
             seed=seed,
             pre_transform=pre_transform,
         )
-        if len(algo_dataset) > 0:
-            print(f"\n[TRAIN - {algo.upper()}]")
-            print(log_graph_examples(algo_dataset, task=dataset_cfg['task'], num_examples=1))
-            algo_images = create_graph_visualizations(algo_dataset, task=dataset_cfg['task'], num_examples=1)
-            graph_images.extend([(f"TRAIN-{algo.upper()}", img) for img in algo_images])
+        if len(test_display_dataset) > 0:
+            print(f"\n[TEST - {test_algorithm.upper()} (OOD)]")
+            print(log_graph_examples(test_display_dataset, task=task, num_examples=1))
+            test_images = create_graph_visualizations(test_display_dataset, task=task, num_examples=1)
+            graph_images.extend([(f"TEST-{test_algorithm.upper()}-OOD", img) for img in test_images])
 
-    # Show one example from test (OOD) algorithm
-    test_display_dataset = GraphTokenDataset(
-        root=dataset_cfg['graph_token_root'],
-        task=dataset_cfg['task'],
-        algorithm=[test_algorithm],
-        split='test',
-        use_split_tasks_dirs=dataset_cfg['use_split_tasks_dirs'],
-        num_graphs=1,
-        num_pairs_per_graph=1,
-        seed=seed,
-        pre_transform=pre_transform,
-    )
-    if len(test_display_dataset) > 0:
-        print(f"\n[TEST - {test_algorithm.upper()} (OOD)]")
-        print(log_graph_examples(test_display_dataset, task=dataset_cfg['task'], num_examples=1))
-        test_images = create_graph_visualizations(test_display_dataset, task=dataset_cfg['task'], num_examples=1)
-        graph_images.extend([(f"TEST-{test_algorithm.upper()}-OOD", img) for img in test_images])
-
-    print('='*80)
-    print(f"\nCreated {len(graph_images)} graph visualizations total")
-    print()
+        print('='*80)
+        print(f"\nCreated {len(graph_images)} graph visualizations total")
+        print()
 
     # data loaders
     train_dl = DataLoader(train_dataset, batch_size=train_cfg['batch_size'], shuffle=True, num_workers=train_cfg['num_workers'])
@@ -249,18 +291,24 @@ def main(config):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Auto-determine number of classes from ALL data (train, val, test combined)
-    from torch.utils.data import ConcatDataset
-    all_dataset = ConcatDataset([train_dataset, val_dataset, test_dataset])
-    num_classes = determine_num_classes_pyg(all_dataset, task=dataset_cfg['task'])
-
-    # Determine input dimension based on task
-    # Note: For shortest_path, query encoding is already added by pre_transform
-    if dataset_cfg['task'] == 'shortest_path':
-        # Query encoding already added by transform, so use actual feature dim
+    # Determine input dimension and number of classes based on task
+    if task == 'zinc':
+        # ZINC: atom features (21-dim) + edge features
         in_dim = train_dataset[0].x.size(1)
-    else:  # cycle_check or other binary tasks
-        in_dim = model_cfg['in_dim']
+        num_classes = 1  # Regression output
+    else:
+        # Auto-determine number of classes from ALL data (train, val, test combined)
+        from torch.utils.data import ConcatDataset
+        all_dataset = ConcatDataset([train_dataset, val_dataset, test_dataset])
+        num_classes = determine_num_classes_pyg(all_dataset, task=task)
+
+        # Determine input dimension based on task
+        # Note: For shortest_path, query encoding is already added by pre_transform
+        if task == 'shortest_path':
+            # Query encoding already added by transform, so use actual feature dim
+            in_dim = train_dataset[0].x.size(1)
+        else:  # cycle_check or other binary tasks
+            in_dim = model_cfg['in_dim']
 
     model = MPNN(
         in_dim=in_dim,
@@ -269,7 +317,7 @@ def main(config):
         dropout=model_cfg['dropout'],
         pooling=model_cfg['pooling'],
         num_classes=num_classes,
-        task=dataset_cfg['task'],
+        task=task,
     ).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg['lr'], weight_decay=train_cfg['weight_decay'])
@@ -281,9 +329,12 @@ def main(config):
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model parameters: {num_params:,}")
 
-    # Create run name with training algorithms in parentheses
-    algo_str = '+'.join(train_algorithms)
-    wandb_run_name = f"{output_cfg['run_name']} ({algo_str})"
+    # Create run name
+    if task == 'zinc':
+        wandb_run_name = output_cfg['run_name']
+    else:
+        algo_str = '+'.join(train_algorithms)
+        wandb_run_name = f"{output_cfg['run_name']} ({algo_str})"
 
     # Initialize W&B if enabled
     if wandb_cfg['use']:
@@ -291,31 +342,38 @@ def main(config):
         wandb.watch(model, log="all", log_freq=100)
         wandb.log({"model/num_parameters": num_params})
 
-        # Log graph visualizations to W&B
-        print("Logging graph visualizations to W&B...")
-        wandb_images = [wandb.Image(img, caption=algo_name) for algo_name, img in graph_images]
-        wandb.log({"examples/train_graphs": wandb_images})
+        # Log graph visualizations to W&B (not for ZINC)
+        if task != 'zinc' and len(graph_images) > 0:
+            print("Logging graph visualizations to W&B...")
+            wandb_images = [wandb.Image(img, caption=algo_name) for algo_name, img in graph_images]
+            wandb.log({"examples/train_graphs": wandb_images})
 
     os.makedirs(output_cfg['out_dir'], exist_ok=True)
-    best_val, best_state = -1.0, None
+
+    # Best model tracking (criterion depends on task)
+    if task == 'zinc':
+        best_val = float('inf')  # Lower MAE is better
+    else:
+        best_val = -1.0  # Higher accuracy is better
+    best_state = None
 
     # Timing and efficiency tracking
     training_start_time = time.time()
     num_train_graphs = len(train_dataset)
-    initial_val_acc = 0.0
+    initial_val_metric = 0.0
     time_to_best = 0.0
 
     for epoch in range(1, train_cfg['epochs'] + 1):
         epoch_start = time.time()
 
-        train_metrics = train_one_epoch(model, train_dl, opt, crit, device, task=dataset_cfg['task'])
-        val_metrics = eval_epoch(model, val_dl, crit, device, task=dataset_cfg['task'])
+        train_metrics = train_one_epoch(model, train_dl, opt, crit, device, task=task)
+        val_metrics = eval_epoch(model, val_dl, crit, device, task=task)
 
         epoch_duration = time.time() - epoch_start
 
-        # Extract key metrics
-        tr_loss, tr_acc = train_metrics['loss'], train_metrics['accuracy']
-        va_loss, va_acc = val_metrics['loss'], val_metrics['accuracy']
+        # Extract key metrics based on task
+        tr_loss = train_metrics['loss']
+        va_loss = val_metrics['loss']
 
         # Calculate throughput (graphs per second)
         graphs_per_sec = num_train_graphs / epoch_duration if epoch_duration > 0 else 0
@@ -325,50 +383,89 @@ def main(config):
         if torch.cuda.is_available():
             gpu_mem_allocated = torch.cuda.memory_allocated() / (1024 ** 2)  # MB
 
-        # Calculate efficiency: time per 1% accuracy gain
-        acc_gain = (va_acc - initial_val_acc) * 100  # Convert to percentage
-        elapsed_time = time.time() - training_start_time
-        time_per_1pct_acc = elapsed_time / acc_gain if acc_gain > 0 else 0
-
         # Build comprehensive logging dictionary
         log_dict = {
             "epoch": epoch,
             "train/loss": tr_loss,
-            "train/acc": tr_acc,
-            "train/precision": train_metrics.get('precision', train_metrics.get('precision_macro', 0)),
-            "train/recall": train_metrics.get('recall', train_metrics.get('recall_macro', 0)),
-            "train/f1": train_metrics.get('f1', train_metrics.get('f1_macro', 0)),
             "val/loss": va_loss,
-            "val/acc": va_acc,
-            "val/precision": val_metrics.get('precision', val_metrics.get('precision_macro', 0)),
-            "val/recall": val_metrics.get('recall', val_metrics.get('recall_macro', 0)),
-            "val/f1": val_metrics.get('f1', val_metrics.get('f1_macro', 0)),
             "lr": opt.param_groups[0]["lr"],
             "time/epoch_duration": epoch_duration,
             "throughput/graphs_per_sec": graphs_per_sec,
             "memory/gpu_allocated_mb": gpu_mem_allocated,
-            "efficiency/time_per_1pct_acc": time_per_1pct_acc,
         }
 
-        # Add MSE/MAE for shortest_path
-        if dataset_cfg['task'] == 'shortest_path':
-            log_dict["train/mse"] = train_metrics.get('mse', 0)
-            log_dict["train/mae"] = train_metrics.get('mae', 0)
-            log_dict["val/mse"] = val_metrics.get('mse', 0)
-            log_dict["val/mae"] = val_metrics.get('mae', 0)
+        # Task-specific metrics
+        if task == 'zinc':
+            # Regression metrics
+            tr_mae, va_mae = train_metrics['mae'], val_metrics['mae']
+            log_dict.update({
+                "train/mae": train_metrics['mae'],
+                "train/mse": train_metrics['mse'],
+                "train/rmse": train_metrics['rmse'],
+                "val/mae": val_metrics['mae'],
+                "val/mse": val_metrics['mse'],
+                "val/rmse": val_metrics['rmse'],
+            })
+
+            # Efficiency: time per 0.01 MAE reduction
+            mae_reduction = initial_val_metric - va_mae if initial_val_metric > 0 else 0
+            elapsed_time = time.time() - training_start_time
+            time_per_mae_reduction = elapsed_time / mae_reduction if mae_reduction > 0 else 0
+            log_dict["efficiency/time_per_0.01_mae_reduction"] = time_per_mae_reduction
+
+            print(f"epoch {epoch:03d} | train loss={tr_loss:.4f}/mae={tr_mae:.4f} | "
+                  f"val loss={va_loss:.4f}/mae={va_mae:.4f} | time {epoch_duration:.2f}s")
+
+            # Select best model based on lowest MAE
+            current_metric = va_mae
+            is_best = va_mae < best_val
+
+        else:
+            # Classification metrics
+            tr_acc, va_acc = train_metrics['accuracy'], val_metrics['accuracy']
+            log_dict.update({
+                "train/acc": tr_acc,
+                "train/precision": train_metrics.get('precision', train_metrics.get('precision_macro', 0)),
+                "train/recall": train_metrics.get('recall', train_metrics.get('recall_macro', 0)),
+                "train/f1": train_metrics.get('f1', train_metrics.get('f1_macro', 0)),
+                "val/acc": va_acc,
+                "val/precision": val_metrics.get('precision', val_metrics.get('precision_macro', 0)),
+                "val/recall": val_metrics.get('recall', val_metrics.get('recall_macro', 0)),
+                "val/f1": val_metrics.get('f1', val_metrics.get('f1_macro', 0)),
+            })
+
+            # Add MSE/MAE for shortest_path
+            if task == 'shortest_path':
+                log_dict.update({
+                    "train/mse": train_metrics.get('mse', 0),
+                    "train/mae": train_metrics.get('mae', 0),
+                    "val/mse": val_metrics.get('mse', 0),
+                    "val/mae": val_metrics.get('mae', 0),
+                })
+
+            # Calculate efficiency: time per 1% accuracy gain
+            acc_gain = (va_acc - initial_val_metric) * 100  # Convert to percentage
+            elapsed_time = time.time() - training_start_time
+            time_per_1pct_acc = elapsed_time / acc_gain if acc_gain > 0 else 0
+            log_dict["efficiency/time_per_1pct_acc"] = time_per_1pct_acc
+
+            # Print progress
+            if task == 'shortest_path':
+                print(f"epoch {epoch:03d} | train {tr_loss:.4f}/acc={tr_acc:.4f}/mse={train_metrics.get('mse', 0):.4f} | "
+                      f"val {va_loss:.4f}/acc={va_acc:.4f}/mse={val_metrics.get('mse', 0):.4f} | time {epoch_duration:.2f}s")
+            else:
+                print(f"epoch {epoch:03d} | train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f} | time {epoch_duration:.2f}s")
+
+            # Select best model based on highest accuracy
+            current_metric = va_acc
+            is_best = va_acc > best_val
 
         if wandb_cfg['use']:
             wandb.log(log_dict)
 
-        # Print progress
-        if dataset_cfg['task'] == 'shortest_path':
-            print(f"epoch {epoch:03d} | train {tr_loss:.4f}/acc={tr_acc:.4f}/mse={train_metrics.get('mse', 0):.4f} | "
-                  f"val {va_loss:.4f}/acc={va_acc:.4f}/mse={val_metrics.get('mse', 0):.4f} | time {epoch_duration:.2f}s")
-        else:
-            print(f"epoch {epoch:03d} | train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f} | time {epoch_duration:.2f}s")
-
-        if va_acc > best_val:
-            best_val = va_acc
+        # Save best model
+        if is_best:
+            best_val = current_metric
             best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
             time_to_best = time.time() - training_start_time
             torch.save(
@@ -382,26 +479,35 @@ def main(config):
     if best_state:
         model.load_state_dict(best_state)
 
-    test_metrics = eval_epoch(model.to(device), test_dl, crit, device, task=dataset_cfg['task'])
-    te_loss, te_acc = test_metrics['loss'], test_metrics['accuracy']
+    test_metrics = eval_epoch(model.to(device), test_dl, crit, device, task=task)
+    te_loss = test_metrics['loss']
 
     # Print test results
     print("\n" + "="*80)
     print("TEST RESULTS")
     print("="*80)
     print(f"Loss: {te_loss:.4f}")
-    print(f"Accuracy: {te_acc:.4f}")
-    print(f"Precision: {test_metrics.get('precision', test_metrics.get('precision_macro', 0)):.4f}")
-    print(f"Recall: {test_metrics.get('recall', test_metrics.get('recall_macro', 0)):.4f}")
-    print(f"F1 Score: {test_metrics.get('f1', test_metrics.get('f1_macro', 0)):.4f}")
 
-    if dataset_cfg['task'] == 'shortest_path':
-        print(f"MSE: {test_metrics.get('mse', 0):.4f}")
-        print(f"MAE: {test_metrics.get('mae', 0):.4f}")
+    if task == 'zinc':
+        # Regression metrics
+        print(f"MAE: {test_metrics['mae']:.4f}")
+        print(f"MSE: {test_metrics['mse']:.4f}")
+        print(f"RMSE: {test_metrics['rmse']:.4f}")
+    else:
+        # Classification metrics
+        te_acc = test_metrics['accuracy']
+        print(f"Accuracy: {te_acc:.4f}")
+        print(f"Precision: {test_metrics.get('precision', test_metrics.get('precision_macro', 0)):.4f}")
+        print(f"Recall: {test_metrics.get('recall', test_metrics.get('recall_macro', 0)):.4f}")
+        print(f"F1 Score: {test_metrics.get('f1', test_metrics.get('f1_macro', 0)):.4f}")
 
-    # Print confusion matrix
-    if 'confusion_matrix' in test_metrics:
-        print("\n" + format_confusion_matrix(test_metrics['confusion_matrix'], task=dataset_cfg['task']))
+        if task == 'shortest_path':
+            print(f"MSE: {test_metrics.get('mse', 0):.4f}")
+            print(f"MAE: {test_metrics.get('mae', 0):.4f}")
+
+        # Print confusion matrix
+        if 'confusion_matrix' in test_metrics:
+            print("\n" + format_confusion_matrix(test_metrics['confusion_matrix'], task=task))
 
     print(f"\nTotal training time: {total_train_time:.2f}s ({total_train_time/60:.2f}min)")
     print(f"Time to best validation: {time_to_best:.2f}s ({time_to_best/60:.2f}min)")
@@ -410,29 +516,42 @@ def main(config):
     if wandb_cfg['use']:
         test_log = {
             "test/loss": te_loss,
-            "test/acc": te_acc,
-            "test/precision": test_metrics.get('precision', test_metrics.get('precision_macro', 0)),
-            "test/recall": test_metrics.get('recall', test_metrics.get('recall_macro', 0)),
-            "test/f1": test_metrics.get('f1', test_metrics.get('f1_macro', 0)),
             "time/total_train_time": total_train_time,
             "time/time_to_best_val": time_to_best,
         }
-        if dataset_cfg['task'] == 'shortest_path':
-            test_log["test/mse"] = test_metrics.get('mse', 0)
-            test_log["test/mae"] = test_metrics.get('mae', 0)
+
+        if task == 'zinc':
+            test_log.update({
+                "test/mae": test_metrics['mae'],
+                "test/mse": test_metrics['mse'],
+                "test/rmse": test_metrics['rmse'],
+            })
+        else:
+            test_log.update({
+                "test/acc": te_acc,
+                "test/precision": test_metrics.get('precision', test_metrics.get('precision_macro', 0)),
+                "test/recall": test_metrics.get('recall', test_metrics.get('recall_macro', 0)),
+                "test/f1": test_metrics.get('f1', test_metrics.get('f1_macro', 0)),
+            })
+
+            if task == 'shortest_path':
+                test_log.update({
+                    "test/mse": test_metrics.get('mse', 0),
+                    "test/mae": test_metrics.get('mae', 0),
+                })
 
         wandb.log(test_log)
 
-        # Log confusion matrix as table
-        if 'confusion_matrix' in test_metrics:
+        # Log confusion matrix as table (classification only)
+        if task != 'zinc' and 'confusion_matrix' in test_metrics:
             cm = test_metrics['confusion_matrix']
-            if dataset_cfg['task'] == 'cycle_check':
+            if task == 'cycle_check':
                 labels = ['No', 'Yes']
             else:
                 labels = [f'len{i+1}' for i in range(7)]
 
             # Create confusion matrix heatmap
-            cm_heatmap = create_confusion_matrix_heatmap(cm, task=dataset_cfg['task'], title="Test Confusion Matrix")
+            cm_heatmap = create_confusion_matrix_heatmap(cm, task=task, title="Test Confusion Matrix")
             wandb.log({"test/confusion_matrix_heatmap": wandb.Image(cm_heatmap, caption="Confusion Matrix")})
 
             # Create confusion matrix table for W&B

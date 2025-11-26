@@ -1,6 +1,6 @@
 dataset:
   graph_token_root: graph-token
-  task: cycle_check  # cycle_check, shortest_path
+  task: cycle_check  # cycle_check, shortest_path, zinc
   train_algorithms: [ba, sbm]  # List of algorithms for training/validation
   test_algorithm: sfn  # OOD algorithm for testing
   use_split_tasks_dirs: true

@@ -25,9 +25,9 @@ def compute_metrics(
     Compute comprehensive metrics for a batch of predictions.
 
     Args:
-        logits: Model outputs (batch_size, num_classes) or (batch_size,) for binary
+        logits: Model outputs (batch_size, num_classes) or (batch_size,) for regression/binary
         labels: Ground truth labels (batch_size,)
-        task: 'cycle_check' or 'shortest_path'
+        task: 'cycle_check', 'shortest_path', or 'zinc' (regression)
         loss_val: Optional loss value to include in metrics
 
     Returns:
@@ -35,6 +35,27 @@ def compute_metrics(
     """
     metrics = {}
 
+    # Regression task (ZINC)
+    if task == 'zinc':
+        preds_np = logits.squeeze().detach().cpu().numpy()
+        labels_np = labels.squeeze().cpu().numpy()
+
+        # Regression metrics
+        mse = ((preds_np - labels_np) ** 2).mean()
+        mae = np.abs(preds_np - labels_np).mean()
+        rmse = np.sqrt(mse)
+
+        metrics['mse'] = float(mse)
+        metrics['mae'] = float(mae)
+        metrics['rmse'] = float(rmse)
+
+        # Add loss if provided
+        if loss_val is not None:
+            metrics['loss'] = float(loss_val)
+
+        return metrics
+
+    # Classification tasks (cycle_check, shortest_path)
     # Move to CPU and convert to numpy
     if logits.dim() > 1:
         preds = logits.argmax(dim=-1).cpu().numpy()
@@ -166,13 +187,16 @@ def get_loss_function(task: str, device: torch.device):
     Get appropriate loss function for the task.
 
     Args:
-        task: 'cycle_check' or 'shortest_path'
+        task: 'cycle_check', 'shortest_path', or 'zinc'
         device: torch device
 
     Returns:
         Loss function (callable)
     """
-    if task == 'cycle_check':
+    if task == 'zinc':
+        # Regression task: Use L1Loss (MAE) - standard for ZINC benchmarking
+        return torch.nn.L1Loss()
+    elif task == 'cycle_check':
         # Binary classification: CrossEntropyLoss with 2 classes
         return torch.nn.CrossEntropyLoss()
     else:
