@@ -1,14 +1,14 @@
 data:
   graph_token_root: graph-token
-  task: shortest_path # cycle_check, shortest_path
-  train_algorithms: [path]  # List of algorithms for training/validation
+  task: cycle_check # cycle_check, shortest_path
+  train_algorithms: [ba, sbm]  # List of algorithms for training/validation
   test_algorithm: sfn  # OOD algorithm for testing
   use_split_tasks_dirs: true
   num_graphs: 100  # Number of graph files to sample per algorithm
   num_pairs_per_graph: 10  # For shortest_path: number of query pairs to sample per graph (null for cycle_check)
 
 out_dir: runs_gps
-run_name: gps-shortest-path
+run_name: gps-cycle-check
 seed: 0
 metric_best: accuracy
 metric_agg: argmax
@@ -63,6 +63,6 @@ optim:
   optimizer: adamW
   weight_decay: 1e-5
   base_lr: 0.001
-  max_epoch: 300
+  max_epoch: 100
   scheduler: cosine_with_warmup
   num_warmup_epochs: 5

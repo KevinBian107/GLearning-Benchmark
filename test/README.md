@@ -91,3 +91,31 @@ python test/data_distribution_test.py
 ```
 
 ---
+
+### 4. `zinc_distribution_test.py` - ZINC 12K Dataset Distribution Analysis
+
+**Purpose**: Analyze and visualize the ZINC 12K molecular graph regression dataset across train/val/test splits.
+
+**Dataset**: ZINC 12K subset from "Benchmarking Graph Neural Networks" paper (2020)
+**Task**: Graph-level regression - predict constrained solubility (continuous real-valued target)
+
+**What it analyzes:**
+- ✓ Graph size distribution (number of nodes per molecule)
+- ✓ Edge count distribution across splits
+- ✓ Node degree distribution (log scale)
+- ✓ Regression target distribution (constrained solubility values)
+- ✓ Box plots comparing graph sizes across splits
+- ✓ Summary statistics (avg nodes, edges, target value statistics)
+- ✓ Sample molecular graph visualizations
+
+**Outputs:**
+- `test/output/zinc_distribution.png` - Comprehensive distribution analysis
+- `test/output/zinc_sample_molecules.png` - Sample molecule visualizations
+
+**Usage:**
+```bash
+# Run ZINC analysis
+python test/zinc_distribution_test.py
+```
+
+---
