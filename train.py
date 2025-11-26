@@ -10,6 +10,54 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
+def get_current_conda_env():
+    """Get the name of the current conda environment."""
+    conda_env = os.environ.get('CONDA_DEFAULT_ENV', None)
+    return conda_env
+
+
+def check_conda_environment(model):
+    """
+    Check if the correct conda environment is active for the given model.
+
+    Required environments:
+    - mpnn, ibtt: glearning_180a
+    - ggps: graphgps
+    - agtt: autograph
+    """
+    env_requirements = {
+        'mpnn': 'glearning_180a',
+        'ibtt': 'glearning_180a',
+        'ggps': 'graphgps',
+        'agtt': 'autograph',
+    }
+
+    required_env = env_requirements.get(model)
+    current_env = get_current_conda_env()
+
+    if current_env is None:
+        print("WARNING: No conda environment detected!")
+        print(f"   This model ({model.upper()}) requires conda environment: {required_env}")
+        print(f"   Please activate it with: conda activate {required_env}")
+        print()
+        return False
+
+    if current_env != required_env:
+        print("=" * 80)
+        print("ERROR: Wrong conda environment!")
+        print("=" * 80)
+        print(f"Current environment: {current_env}")
+        print(f"Required environment: {required_env}")
+        print()
+        print(f"To fix this, run:")
+        print(f"  conda activate {required_env}")
+        print(f"  python train.py --model {model} {'--config ' + sys.argv[sys.argv.index('--config') + 1] if '--config' in sys.argv else ''}")
+        print("=" * 80)
+        sys.exit(1)
+
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Train graph learning models',
@@ -50,6 +98,9 @@ Examples:
 
     args = parser.parse_args()
 
+    # Check conda environment before proceeding
+    check_conda_environment(args.model)
+
     # Use default config if not specified
     if args.config is None:
         default_configs = {
@@ -87,27 +138,33 @@ Examples:
     elif args.model == 'mpnn':
         from trainer import train_mpnn
         config = train_mpnn.load_config(args.config)
-        print(f"Task: {config['dataset']['task']}")
-        print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
-        print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
+        task = config['dataset']['task']
+        print(f"Task: {task}")
+        if 'train_algorithms' in config['dataset']:
+            print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
+            print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
         print()
         train_mpnn.main(config)
 
     elif args.model == 'ggps':
         from trainer import train_ggps
         config = train_ggps.load_config(args.config)
-        print(f"Task: {config['data']['task']}")
-        print(f"Train Algorithms: {config['data']['train_algorithms']}")
-        print(f"Test Algorithm (OOD): {config['data']['test_algorithm']}")
+        task = config['data']['task']
+        print(f"Task: {task}")
+        if 'train_algorithms' in config['data']:
+            print(f"Train Algorithms: {config['data']['train_algorithms']}")
+            print(f"Test Algorithm (OOD): {config['data']['test_algorithm']}")
         print()
         train_ggps.main(config)
 
     elif args.model == 'agtt':
         from trainer import train_agtt
         config = train_agtt.load_config(args.config)
-        print(f"Task: {config['dataset']['task']}")
-        print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
-        print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
+        task = config['dataset']['task']
+        print(f"Task: {task}")
+        if 'train_algorithms' in config['dataset']:
+            print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
+            print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
         print()
         train_agtt.main(config)
 

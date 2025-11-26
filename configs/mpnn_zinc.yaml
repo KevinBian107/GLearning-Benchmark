@@ -1,0 +1,27 @@
+dataset:
+  task: zinc
+  zinc_root: ./data/ZINC
+  subset: true  # Use 12K subset (true) or full dataset (false)
+
+model:
+  in_dim: 1 # input feature dimension (constant features for synthetic graphs)
+  hidden_dim: 64
+  num_layers: 5
+  dropout: 0.1
+  pooling: mean # mean, add, or max
+
+train:
+  batch_size: 128
+  epochs: 100
+  lr: 0.001   
+  weight_decay: 1.0e-5 
+  seed: 0        
+  num_workers: 2  
+
+output:
+  out_dir: runs_mpnn
+  run_name: mpnn-zinc
+
+wandb:
+  use: true
+  project: graph-token

@@ -58,6 +58,7 @@ Similarly, we can run a GPS model upon the native graph like the following:
 ```bash
 conda activate graphgps
 python train.py --model ggps
+python train.py --model ggps --config configs/gps_zinc.yaml
 ```
 
 **Note**: GraphGPS uses a more complex config structure with sections like `gt` (graph transformer), `gnn`, and `optim`. See [docs/ggps.md](docs/ggps.md) for details on the architecture.
@@ -69,6 +70,7 @@ At last, using similar setup as GPS, we can perform MPNN upon the native graph a
 ```bash
 conda activate glearning_180a
 python train.py --model mpnn
+python train.py --model mpnn --config configs/mpnn_zinc.yaml
 ```
 
 **Note**: Our MPNN implementation uses GIN (Graph Isomorphism Network) layers, which are provably as expressive as the Weisfeiler-Leman graph isomorphism test. See [docs/mpnn.md](docs/mpnn.md) for detailed architecture information.
