@@ -129,9 +129,11 @@ Examples:
     if args.model == 'ibtt':
         from trainer import train_ibtt
         config = train_ibtt.load_config(args.config)
-        print(f"Task: {config['dataset']['task']}")
-        print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
-        print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
+        task = config['dataset']['task']
+        print(f"Task: {task}")
+        if 'train_algorithms' in config['dataset']:
+            print(f"Train Algorithms: {config['dataset']['train_algorithms']}")
+            print(f"Test Algorithm (OOD): {config['dataset']['test_algorithm']}")
         print()
         train_ibtt.main(config)
 

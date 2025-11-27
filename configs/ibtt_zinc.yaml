@@ -1,0 +1,31 @@
+dataset:
+  task: zinc  # ZINC molecular property prediction (regression)
+  zinc_root: ./data/ZINC
+  subset: true  # Use 12K subset (true) or full dataset (false)
+  max_len: 1024  # Maximum sequence length (ZINC molecules can be larger)
+  max_vocab: 2000  # Maximum unique tokens (more tokens for molecular structures)
+
+model:
+  vocab_size: null
+  d_model: 16 
+  nhead: 4
+  nlayers: 2
+  d_ff: 128
+  dropout: 0.1
+  max_pos: 1024
+
+train:
+  batch_size: 128
+  epochs: 100
+  lr: 0.001
+  weight_decay: 1.0e-5
+  seed: 0
+  num_workers: 2
+
+output:
+  out_dir: runs_ibtt
+  run_name: ibtt-zinc
+
+wandb:
+  use: true
+  project: graph-token

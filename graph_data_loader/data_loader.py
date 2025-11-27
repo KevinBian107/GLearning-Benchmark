@@ -638,13 +638,24 @@ def determine_num_classes(examples: List[Dict[str, Any]], task: str) -> int:
 
     Args:
         examples: List of example dicts with 'label' key
-        task: Task name ('cycle_check' or 'shortest_path')
+        task: Task name ('cycle_check', 'shortest_path', or 'zinc')
 
     Returns:
-        Number of classes
+        Number of classes (1 for regression tasks)
     """
     if task == 'cycle_check':
         return 2
+
+    if task == 'zinc':
+        # Regression task: return 1 (single continuous output)
+        print(f"\n{'='*80}")
+        print(f"AUTO-DETERMINED NUM_CLASSES")
+        print('='*80)
+        print(f"Task: {task} (regression)")
+        print(f"Number of outputs: 1 (continuous)")
+        print('='*80)
+        print()
+        return 1
 
     # For shortest_path, find max distance
     max_label = -1
@@ -679,13 +690,24 @@ def determine_num_classes_pyg(dataset, task: str) -> int:
 
     Args:
         dataset: PyG dataset or list of Data objects
-        task: Task name ('cycle_check' or 'shortest_path')
+        task: Task name ('cycle_check', 'shortest_path', or 'zinc')
 
     Returns:
-        Number of classes
+        Number of classes (or 1 for regression tasks)
     """
     if task == 'cycle_check':
         return 2
+
+    if task == 'zinc':
+        # ZINC is a regression task, return 1 for single continuous output
+        print(f"\n{'='*80}")
+        print(f"AUTO-DETERMINED NUM_CLASSES")
+        print('='*80)
+        print(f"Task: {task} (regression)")
+        print(f"Number of outputs: 1 (continuous)")
+        print('='*80)
+        print()
+        return 1
 
     # For shortest_path, find max distance
     max_label = -1
