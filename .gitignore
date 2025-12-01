@@ -6,6 +6,7 @@ saved_models/
 wandb
 runs_*/
 __pycache__
+figures_output
 
 # Processed datasets
 *.pt
